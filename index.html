@@ -28,7 +28,7 @@
     --shadow-sm:0 4px 12px rgba(11,37,69,.08);
   }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
-  html,body{font-family:'Rabar','Rabar 013',Tahoma,Arial,sans-serif;font-size:14px;margin:0;padding:0;overflow-x:hidden;}
+  html,body{margin:0;padding:0;overflow-x:hidden;}
   /* iOS Safari sometimes won't register taps on plain elements (div/span) that only have
      an onclick attribute unless they look "clickable" (cursor:pointer). This makes every
      clickable element in the app reliably tappable on iPhone. */
@@ -167,11 +167,6 @@
   .stat-card .value{font-size:28px;font-weight:800;color:var(--navy);}
   .stat-card .icon-wrap{width:42px;height:42px;border-radius:12px;display:flex;align-items:center;justify-content:center;margin-bottom:12px;}
   .stat-card svg{width:22px;height:22px;}
-  .stat-card.clickable{cursor:pointer;transition:.15s;}
-  .stat-card.clickable:hover{transform:translateY(-2px);box-shadow:0 12px 28px rgba(11,37,69,.14);}
-  .city-summary{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;}
-  .city-summary .city-pill{display:flex;align-items:center;gap:6px;background:var(--bg);border:1px solid #e5ece8;border-radius:999px;padding:6px 10px;font-size:11.5px;font-weight:700;color:var(--text);}
-  .city-summary .city-pill strong{color:var(--green);}
 
   .form-row{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
   @media(max-width:640px){.form-row{grid-template-columns:1fr;}}
@@ -309,17 +304,6 @@
     .modal-body{padding:18px;}
     .modal-head, .modal-foot{padding:14px 18px;}
   }
-
-/* Added city grouping and profile-photo zoom */
-.city-group{margin-bottom:14px;border:1px solid #e7eee9;border-radius:12px;overflow:hidden;background:#fff}
-.city-group-head{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;background:var(--bg);font-weight:800}
-.city-group-head .count{font-size:12px;color:var(--muted);font-weight:700}
-.city-group-body{padding:10px}
-.city-filter-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
-.city-filter-btn{border:1px solid #dfe8e2;background:#fff;border-radius:9px;padding:7px 12px;cursor:pointer;font-size:13px}
-.city-filter-btn.active{background:var(--green-pale);border-color:var(--green);color:#0f5c39;font-weight:800}
-.profile-photo-click{cursor:zoom-in}
-
 </style>
 </head>
 <body>
@@ -375,9 +359,6 @@ let state = {
   scanLoopId: null,
   searchQuery: '',
   selectedStudentId: null,
-  profileCityFilter: 'all',
-  attendanceCityFilter: 'all',
-  reportCityFilter: 'all',
   reportDate: '',
   reportCourseId: 'all',
   sidebarOpen: false,
@@ -388,20 +369,8 @@ const CITIES = ['هەولێر', 'دهۆک', 'سلێمانی', 'زاخۆ', 'کە�
 function uid(prefix){ return prefix + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2,8); }
 function todayStr(){ const d = new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
 function nowTimeStr(){ const d = new Date(); return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'); }
-function normalizeStudent(s){
-  if(!s || typeof s!=='object') return s;
-  s.courseIds = Array.isArray(s.courseIds) ? s.courseIds.map(String) : [];
-  return s;
-}
-function normalizeStateData(){
-  state.courses = Array.isArray(state.courses) ? state.courses : [];
-  state.courses = state.courses.filter(c=>c && c.id).map(c=>({...c,id:String(c.id)}));
-  state.students = Array.isArray(state.students) ? state.students.map(normalizeStudent).filter(Boolean) : [];
-  state.attendance = Array.isArray(state.attendance) ? state.attendance : [];
-  state.accounts = Array.isArray(state.accounts) ? state.accounts : [];
-}
-function courseById(id){ return state.courses.find(c=>String(c.id)===String(id)); }
-function studentById(id){ return state.students.find(s=>String(s.id)===String(id)); }
+function courseById(id){ return state.courses.find(c=>c.id===id); }
+function studentById(id){ return state.students.find(s=>s.id===id); }
 function courseName(id){ const c = courseById(id); return c ? c.name : 'کۆرسی سڕاوە'; }
 function studentName(id){ const s = studentById(id); return s ? s.fullName : 'قوتابی سڕاوە'; }
 function initials(name){ return (name||'?').trim().split(/\s+/).slice(0,2).map(w=>w[0]).join(''); }
@@ -418,24 +387,21 @@ function photoSrc(url){
 }
 function escAttr(v){ return String(v==null?'':v).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
-/* ==================== SECURE STORAGE (Google Apps Script) ==================== */
+/* ==================== STORAGE (Google Sheets backend) ==================== */
+/* هەموو داتای هاوبەش (کۆرس/قوتابی/ئامادەیی/هەژمار) ڕاستەوخۆ لە Google Sheets پاشەکەوت دەکرێت،
+   لە ڕێگەی Google Apps Script Web App (Code.gs). لینک و کۆدی نهێنی ڕاستەوخۆ لێرە دادەنرێن —
+   یەک جار لەلایەن بەڕێوەبەرەوە، پاشان هەموو کەسێک کە فایلەکە بکاتەوە خۆکارانە پەیوەست دەبێت،
+   بێ ئەوەی پێویستی بە هیچ ڕێکخستنێکی تر هەبێت. سیشن (چوونەژوورەوە) تەنها لۆکاڵە دەمێنێتەوە. */
 const SHEETS_URL = 'https://script.google.com/macros/s/AKfycbz3_ASGbcBNJkB2FuZGwWIRB5m3SwO6QVqTIaf2dq-uEIoXGrDPfW8F4wp5yb1KMYdNYg/exec';
-const MAX_FILE_BYTES = 10 * 1024 * 1024;
-const MAX_FILE_MB = 10;
-const LS_SESSION_KEY = 'rk_secure_session_v2';
+const LS_SESSION_KEY = 'rk_session';
 
 function getSheetsUrl(){ return SHEETS_URL.trim(); }
-function isSheetsConfigured(){ return !!SHEETS_URL && !SHEETS_URL.includes('PASTE_YOUR_DEPLOYMENT_ID_HERE'); }
+function isSheetsConfigured(){ return !!SHEETS_URL && SHEETS_URL.includes('/macros/s/') && SHEETS_URL.endsWith('/exec'); }
 
 let syncTimer = null;
 let syncPending = false;
-let syncInFlight = false;
-let syncDirty = false;
-let syncIntervalId = null;
-let syncResolvers = [];
-
 function setSyncBadge(status){
-  state.syncStatus = status;
+  state.syncStatus = status; // 'ok' | 'busy' | 'error'
   const el = document.getElementById('syncBadge');
   if(el) el.outerHTML = syncBadgeHtml();
 }
@@ -451,13 +417,86 @@ function syncBadgeHtml(){
     <span style="width:7px;height:7px;border-radius:50%;background:${m.c};display:inline-block;"></span>${m.t}</span>`;
 }
 
+async function apiGet(){
+  const session = state.session && state.session.token ? state.session.token : '';
+  if(!session) throw new Error('unauthorized');
+  return apiPost({action:'getData', session});
+}
+/* ==================== FILE UPLOAD (photo / CV → Google Drive) ==================== */
+const MAX_FILE_MB = 10;
+
+function fileToBase64(file){
+  return new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onload = ()=> resolve(String(reader.result).split(',')[1] || '');
+    reader.onerror = ()=> reject(new Error('read_failed'));
+    reader.readAsDataURL(file);
+  });
+}
+
+/* وێنەکان (بۆ نموونە وێنەی کامێرای مۆبایل کە زۆرجار چەند مێگابایتە) پێش ناردن بچووک و کۆمپرێس دەکرێن.
+   ئەمە خێرایی بارکردن زۆر بەرز دەکاتەوە، چونکە قەبارەی داتای نێردراو بۆ Apps Script کەم دەبێتەوە.
+   فایلی سیڤی (PDF/Word) وەک خۆی دەمێنێتەوە، چونکە ناتوانرێت وێنە بکرێت. */
+function compressImage(file, maxDim=900, quality=0.72){
+  return new Promise((resolve)=>{
+    if(!file.type || !file.type.startsWith('image/') || file.type==='image/gif'){
+      resolve(file); return;
+    }
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = ()=>{
+      URL.revokeObjectURL(url);
+      let { width, height } = img;
+      if(width>maxDim || height>maxDim){
+        const scale = maxDim / Math.max(width, height);
+        width = Math.round(width*scale); height = Math.round(height*scale);
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = width; canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, width, height);
+      canvas.toBlob((blob)=>{
+        if(!blob || blob.size >= file.size){ resolve(file); return; } // ئەگەر کۆمپرێسکردن یارمەتی نەدا، فایلی سەرەکی بەکاربهێنە
+        resolve(new File([blob], file.name.replace(/\.[^.]+$/, '') + '.jpg', { type:'image/jpeg' }));
+      }, 'image/jpeg', quality);
+    };
+    img.onerror = ()=>{ URL.revokeObjectURL(url); resolve(file); };
+    img.src = url;
+  });
+}
+
+/* kind: 'photo' | 'cv' — فایلەکە دەنێردرێت بۆ Code.gs، ئەویش لەناو Google Drive هەڵیدەگرێت
+   و { id, url } دەگەڕێنێتەوە. لە کاتی هەڵە، توست پیشان دەدات و null دەگەڕێنێتەوە. */
+async function uploadFile(file, kind){
+  if(!file) return null;
+  if(file.size > MAX_FILE_MB*1024*1024){
+    showToast(`قەبارەی فایل (${kind==='cv'?'سیڤی':'وێنە'}) نابێت زیاتر لە ${MAX_FILE_MB}MB بێت`, 'error');
+    throw new Error('file_too_large');
+  }
+  try{
+    const toSend = kind==='photo' ? await compressImage(file) : file;
+    const base64 = await fileToBase64(toSend);
+    const res = await apiPost({ action:'uploadFile', kind, fileName:toSend.name, mimeType:toSend.type, fileData: base64 });
+    if(!res || !res.id || !res.url) throw new Error('upload_failed');
+    return { id: res.id, url: res.url };
+  }catch(e){
+    console.error('uploadFile failed', e);
+    showToast(`بارکردنی ${kind==='cv'?'سیڤی':'وێنە'} سەرنەکەوت`, 'error');
+    throw e;
+  }
+}
+
 async function apiPost(payload){
   const url = getSheetsUrl();
   if(!url) throw new Error('not_configured');
+  const body = Object.assign({}, payload);
+  if(!body.session && state.session && state.session.token){
+    body.session = state.session.token;
+  }
   const res = await fetch(url, {
     method:'POST',
-    headers:{'Content-Type':'text/plain;charset=utf-8'},
-    body:JSON.stringify(payload)
+    headers:{ 'Content-Type':'text/plain;charset=utf-8' },
+    body: JSON.stringify(body),
   });
   if(!res.ok) throw new Error('network');
   const data = await res.json();
@@ -465,194 +504,120 @@ async function apiPost(payload){
   return data;
 }
 
-async function apiGet(){
-  const session = state.session && state.session.token ? state.session.token : '';
-  return apiPost({action:'getData', session});
-}
-
-function buildSyncPayload(){
-  normalizeStateData();
-  return {
-    action:'sync',
-    session: state.session && state.session.token ? state.session.token : '',
-    raw:{
-      courses: state.courses,
-      students: state.students,
-      attendance: state.attendance,
-    },
-    display:{
-      courses: state.courses.map(c=>({ id:c.id, name:c.name })),
-      students: state.students.map(s=>({
-        id:s.id, fullName:s.fullName, age:s.age, mobile:s.mobile, gender:s.gender, profession:s.profession, city:s.city||'',
-        courseNames: s.courseIds.map(id=>courseName(id)).join('، '), createdAt:s.createdAt,
-        photo: s.photoUrl ? `=IMAGE("${s.photoUrl}")` : '',
-        cv: s.cvUrl ? `=HYPERLINK("${s.cvUrl}","کردنەوەی سیڤی")` : '',
-      })),
-      attendance: state.attendance.map(a=>({ id:a.id, studentName:studentName(a.studentId), courseName:courseName(a.courseId), date:a.date, time:a.time, method:a.method, markedBy:a.markedBy })),
-    },
-  };
-}
-
-async function flushSync(){
-  if(syncInFlight || !syncDirty || !isSheetsConfigured() || !state.session) return;
-  syncPending = false;
-  syncInFlight = true;
-  setSyncBadge('busy');
-  const waiters = syncResolvers;
-  syncResolvers = [];
-  try{
-    await apiPost(buildSyncPayload());
-    syncDirty = false;
-    setSyncBadge('ok');
-    waiters.forEach(w=>w.resolve());
-  }catch(e){
-    console.error('sync failed', e);
-    setSyncBadge('error');
-    if(e.message==='unauthorized_session'){
-      await invalidateSession();
-    } else {
-      showToast('هاوکاتکردن لەگەڵ Google Sheets سەرنەکەوت', 'error');
-    }
-    waiters.forEach(w=>w.reject(e));
-  }finally{
-    syncInFlight = false;
-    if(syncDirty && isSheetsConfigured() && state.session){
-      clearTimeout(syncTimer);
-      syncPending = true;
-      syncTimer = setTimeout(flushSync, 700);
-    }
-  }
-}
-
-function syncToSheets(){
-  if(!isSheetsConfigured() || !state.session) return Promise.resolve();
-  syncDirty = true;
-  clearTimeout(syncTimer);
-  const promise = new Promise((resolve,reject)=>syncResolvers.push({resolve,reject}));
+/* هەموو داتای هاوبەش، لەگەڵ وەشانی نیشاندانی خۆشەکراو بۆ خودی شیتەکە، بە یەک ناردن دەنێردرێت */
+async function syncToSheets(){
+  if(!isSheetsConfigured()) return;
   syncPending = true;
-  syncTimer = setTimeout(flushSync, 400);
-  return promise;
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(async ()=>{
+    if(!syncPending) return;
+    syncPending = false;
+    setSyncBadge('busy');
+    try{
+      await apiPost({
+        action:'sync',
+        session: state.session && state.session.token ? state.session.token : '',
+        raw:{
+          courses: state.courses,
+          students: state.students,
+          attendance: state.attendance,
+          accounts: state.accounts,
+        },
+        display:{
+          courses: state.courses.map(c=>({ id:c.id, name:c.name })),
+          students: state.students.map(s=>({
+            id:s.id, fullName:s.fullName, age:s.age, mobile:s.mobile, gender:s.gender, profession:s.profession, city:s.city||'',
+            courseNames: s.courseIds.map(id=>courseName(id)).join('، '), createdAt:s.createdAt,
+            photo: s.photoUrl ? `=IMAGE("${s.photoUrl}")` : '',
+            cv: s.cvUrl ? `=HYPERLINK("${s.cvUrl}","کردنەوەی سیڤی")` : '',
+          })),
+          attendance: state.attendance.map(a=>({ id:a.id, studentName:studentName(a.studentId), courseName:courseName(a.courseId), date:a.date, time:a.time, method:a.method, markedBy:a.markedBy })),
+        },
+      });
+      setSyncBadge('ok');
+    }catch(e){
+      console.error('sync failed', e);
+      setSyncBadge('error');
+      showToast('هاوکاتکردن لەگەڵ Google Sheets سەرنەکەوت — پەیوەندی ئینتەرنێت بپشکنە', 'error');
+    }
+  }, 400);
 }
 
+async function saveCourses(){ await syncToSheets(); }
+async function saveStudents(){ await syncToSheets(); }
+async function saveAttendance(){ await syncToSheets(); }
+async function saveAccounts(){ await syncToSheets(); }
 async function saveSession(){
   if(state.session) localStorage.setItem(LS_SESSION_KEY, JSON.stringify(state.session));
   else localStorage.removeItem(LS_SESSION_KEY);
 }
 
-async function invalidateSession(){
-  state.session = null;
-  syncDirty = false;
-  syncPending = false;
-  syncInFlight = false;
-  await saveSession();
-  state.ready = true;
-  render();
-}
-
 async function loadAll(){
   if(!isSheetsConfigured()){
+    state.needsSetup = true;
     state.ready = true;
-    state.loadError = true;
     render();
     return;
   }
-  state.ready = true;
-  state.loadError = false;
-  render();
+
+  // With the secure backend, data is not loaded before login.
+  // The login endpoint authenticates first and returns the initial permitted data.
   const saved = JSON.parse(localStorage.getItem(LS_SESSION_KEY) || 'null');
-  if(!saved || !saved.token){
-    state.session = null;
-    render();
-    return;
-  }
-  state.session = saved;
-  try{
-    const data = await apiGet();
-    state.courses = data.courses || [];
-    state.students = data.students || [];
-    state.attendance = data.attendance || [];
-    state.accounts = data.accounts || [];
-    normalizeStateData();
-    state.needsSetup = false;
-    state.loadError = false;
-    render();
-    startBackgroundSync();
-  }catch(e){
-    console.error('secure session load failed', e);
-    state.session = null;
-    localStorage.removeItem(LS_SESSION_KEY);
-    if(e.message==='unauthorized_session'){
-      state.loadError = false;
+  if(saved && saved.token){
+    state.session = saved;
+    try{
+      const data = await apiGet();
+      state.courses = (data && data.courses) || [];
+      state.students = (data && data.students) || [];
+      state.attendance = (data && data.attendance) || [];
+      state.accounts = (data && data.accounts) || [];
+      state.ready = true;
+      state.needsSetup = false;
       render();
-    }else{
-      state.loadError = true;
-      render();
+      startBackgroundSync();
+      return;
+    }catch(e){
+      console.warn('saved session invalid/expired', e);
+      localStorage.removeItem(LS_SESSION_KEY);
+      state.session = null;
     }
   }
-}
 
+  state.ready = true;
+  state.needsSetup = false;
+  render();
+}
+/* هەر چەند چرکەیەک بە شێوەی بێدەنگ داتای نوێ لە Google Sheets وەردەگیرێت،
+   بۆ ئەوەی چەند کارمەندێک بەیەکەوە کاربکەن و هەمووان نوێترین زانیاری ببینن */
+/* پێش ڕیفرێشکردنی ناوخۆیی، دڵنیابەرەوە کە بەکارهێنەر لەناو فۆرمێکدا خەریکی نووسینە —
+   ئەگەر وابێت، ڕیفرێشەکە خانەکانی فۆرم پاک ناکاتەوە (بۆ نموونە فۆرمی تۆمارکردنی قوتابی
+   کە کاتێکی زۆرتری پێویستە بۆ پڕکردنەوە، بەتایبەت بارکردنی وێنە/سیڤی). */
 function isEditingForm(){
   const vc = document.getElementById('viewContent');
   if(!vc) return false;
   if(state.currentView === 'register') return true;
   const el = document.activeElement;
-  return !!(el && vc.contains(el) && ['INPUT','SELECT','TEXTAREA'].includes(el.tagName));
+  if(el && vc.contains(el) && ['INPUT','SELECT','TEXTAREA'].includes(el.tagName)) return true;
+  return false;
 }
 
 function startBackgroundSync(){
-  if(syncIntervalId) return;
-  syncIntervalId = setInterval(async ()=>{
+  setInterval(async ()=>{
     if(!state.session || !isSheetsConfigured()) return;
-    if(syncDirty || syncInFlight || syncPending) return;
-    if(document.getElementById('modalOverlay')) return;
-    if(isEditingForm()) return;
+    if(document.getElementById('modalOverlay')) return; // مۆداڵێک کراوەیە، ناوەخۆ مەکە
     try{
       const data = await apiGet();
-      if(!data || !state.session) return;
-      if(syncDirty || syncInFlight || syncPending) return;
+      if(!data) return;
       state.courses = data.courses || state.courses;
       state.students = data.students || state.students;
       state.attendance = data.attendance || state.attendance;
       state.accounts = data.accounts || state.accounts;
-      normalizeStateData();
       if(state.ready && state.session && !isEditingForm()){
         const vc = document.getElementById('viewContent');
         if(vc) vc.innerHTML = renderView();
       }
-    }catch(e){
-      if(e.message==='unauthorized_session') await invalidateSession();
-    }
+    }catch(e){ /* بێدەنگ، دواتر هەوڵ دەداتەوە */ }
   }, 20000);
-}
-
-async function saveCourses(){ return syncToSheets(); }
-async function saveStudents(){ return syncToSheets(); }
-async function saveAttendance(){ return syncToSheets(); }
-
-async function uploadFile(file, kind){
-  if(!file) return null;
-  const max = MAX_FILE_BYTES || (10*1024*1024);
-  if(file.size > max){ showToast('قەبارەی فایل زۆر گەورەیە', 'error'); throw new Error('file_too_large'); }
-  const base64 = await new Promise((resolve,reject)=>{
-    const r = new FileReader();
-    r.onload = ()=>resolve(String(r.result||'').split(',')[1]||'');
-    r.onerror = reject;
-    r.readAsDataURL(file);
-  });
-  showUploadOverlay('بارکردنی فایل...', 'تکایە چاوەڕێ بکە');
-  try{
-    const result = await apiPost({
-      action:'uploadFile', session:state.session && state.session.token,
-      fileData:base64, fileName:file.name, mimeType:file.type, kind
-    });
-    return result;
-  }catch(e){
-    if(e.message==='unauthorized_session') await invalidateSession();
-    showToast('بارکردنی فایل سەرنەکەوت', 'error');
-    throw e;
-  }finally{
-    hideUploadOverlay();
-  }
 }
 
 /* ==================== TOAST ==================== */
@@ -667,15 +632,53 @@ function showToast(msg, type='success'){
 }
 
 /* ==================== UPLOAD OVERLAY ==================== */
+/* لە کاتی بارکردنی وێنە/سیڤی یان هاوکاتکردن لەگەڵ Google Sheets، ئەم پۆشەرە
+   دەرگای هەموو شاشەکە دادادەخات و چاوەڕوانکەرێکی ئاشکرا پیشان دەدات، بۆ ئەوەی
+   بەکارهێنەر نەزانێت سیستەمەکە کۆیلاوە یان تەنها خەریکی کارکردنە. */
 function showUploadOverlay(text='تکایە چاوەڕێ بکە...', sub='بارکردن لەسەر خێراییی ئینتەرنێتەکەت بەندە'){
   hideUploadOverlay();
   const el = document.createElement('div');
-  el.id = 'uploadOverlay'; el.className = 'upload-overlay';
-  el.innerHTML = `<div class="upload-overlay-card"><div class="upload-spinner"></div><div class="upload-overlay-text" id="uploadOverlayText">${text}</div><div class="upload-overlay-sub">${sub}</div></div>`;
+  el.id = 'uploadOverlay';
+  el.className = 'upload-overlay';
+  el.innerHTML = `<div class="upload-overlay-card">
+      <div class="upload-spinner"></div>
+      <div class="upload-overlay-text" id="uploadOverlayText">${text}</div>
+      <div class="upload-overlay-sub">${sub}</div>
+    </div>`;
   document.body.appendChild(el);
 }
-function setUploadOverlayText(text){ const t=document.getElementById('uploadOverlayText'); if(t)t.textContent=text; }
-function hideUploadOverlay(){ const el=document.getElementById('uploadOverlay'); if(el)el.remove(); }
+function setUploadOverlayText(text){
+  const t = document.getElementById('uploadOverlayText');
+  if(t) t.textContent = text;
+}
+function hideUploadOverlay(){
+  const el = document.getElementById('uploadOverlay');
+  if(el) el.remove();
+}
+
+/* ==================== MODAL ==================== */
+function openModal(title, bodyHtml, footHtml=''){
+  closeModal();
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'modalOverlay';
+  overlay.onclick = (e)=>{ if(e.target===overlay) closeModal(); };
+  overlay.innerHTML = `
+    <div class="modal">
+      <div class="modal-head">
+        <h3>${title}</h3>
+        <button class="modal-close" onclick="closeModal()">${ICONS.close}</button>
+      </div>
+      <div class="modal-body">${bodyHtml}</div>
+      ${footHtml ? `<div class="modal-foot">${footHtml}</div>` : ''}
+    </div>`;
+  document.body.appendChild(overlay);
+}
+function closeModal(){
+  stopScanner();
+  const el = document.getElementById('modalOverlay');
+  if(el) el.remove();
+}
 
 /* ==================== AUTH ==================== */
 let loginRole = 'admin';
@@ -686,34 +689,60 @@ async function doLogin(ev){
   const u = document.getElementById('loginUser').value.trim();
   const p = document.getElementById('loginPass').value;
   const errBox = document.getElementById('loginErr');
+
+  if(errBox) errBox.style.display='none';
+
   try{
-    const result = await apiPost({action:'login', username:u, password:p, role:loginRole});
-    if(!result || !result.session) throw new Error('login_failed');
+    const result = await apiPost({
+      action:'login',
+      username:u,
+      password:p,
+      role:loginRole
+    });
+
+    if(!result || !result.session){
+      throw new Error('invalid_credentials');
+    }
+
     state.session = result.session;
-    state.courses = result.data.courses || [];
-    state.students = result.data.students || [];
-    state.attendance = result.data.attendance || [];
-    state.accounts = result.data.accounts || [];
-    normalizeStateData();
+
+    const data = result.data || {};
+    state.courses = data.courses || [];
+    state.students = data.students || [];
+    state.attendance = data.attendance || [];
+    state.accounts = data.accounts || [];
+
     await saveSession();
-    state.currentView='dashboard';
-    state.loadError=false;
+    state.currentView = 'dashboard';
+    state.ready = true;
+    state.loadError = false;
     render();
-    startBackgroundSync();
     showToast('بەخێربێیت ' + (state.session.name || u), 'success');
+    startBackgroundSync();
   }catch(e){
-    console.error('login failed',e);
-    if(errBox){ errBox.style.display='block'; errBox.textContent = e.message==='network' ? 'پەیوەندی بە سێرڤەر نەکرا.' : 'ناوی بەکارهێنەر یان وشەی نهێنی هەڵەیە، یان ڕۆڵ ڕاست نییە.'; }
+    console.error('login failed', e);
+    if(errBox){
+      errBox.style.display='block';
+      errBox.textContent =
+        e.message === 'invalid_credentials'
+          ? 'ناوی بەکارهێنەر یان وشەی نهێنی هەڵەیە، یان ڕۆڵ ڕاست نییە.'
+          : 'چوونەژوورەوە سەرنەکەوت — پەیوەندی بە سێرڤەر بپشکنە.';
+    }
   }
 }
 
 async function doLogout(){
-  try{ if(state.session) await apiPost({action:'logout',session:state.session.token}); }catch(e){}
-  await invalidateSession();
+  try{
+    if(state.session && state.session.token){
+      await apiPost({action:'logout', session:state.session.token});
+    }
+  }catch(e){}
+  state.session = null;
+  await saveSession();
+  render();
 }
 
 /* ==================== NAV ==================== */
-
 function go(view){
   state.currentView = view;
   state.sidebarOpen = false;
@@ -757,8 +786,8 @@ function renderSetup(){
         </div>
         <ol style="font-size:12.5px;color:var(--muted);line-height:2;text-align:right;padding-right:18px;margin:10px 0 18px;">
           <li>فایلی <code>index.html</code> بکەرەوە بە دەستکاریکەرێکی دەق (وەک VS Code یان Notepad).</li>
-          <li>بگەڕێ بۆ دەقی <code>SHEETS_URL</code> لە سەرەوەی کۆدەکە.</li>
-          <li>لینکی Web Appـی خۆت لەوێ دابنێ؛ هیچ کۆدی نهێنی لە index.html مەخە (ڕێنمایی و کۆدی Apps Script لە بەشی ڕێکخستنەکانی ناو بەرنامەکە هەیە).</li>
+          <li>بگەڕێ بۆ دەقی <code>SHEETS_URL</code> و <code>Web App URL</code> لە سەرەوەی کۆدەکە.</li>
+          <li>لینکی Web Appـی خۆت و کۆدی نهێنیت لەوێ دابنێ (ڕێنمایی و کۆدی Apps Script لە بەشی ڕێکخستنەکانی ناو بەرنامەکە هەیە).</li>
           <li>فایلەکە پاشەکەوت و دووبارە باربکەرەوە (Upload) بۆ سێرڤەرەکەت.</li>
         </ol>
         <button class="btn btn-primary" onclick="retryLoad()">هەوڵدانەوە دوای ڕێکخستن</button>
@@ -774,7 +803,7 @@ function renderLoadError(){
       <div class="login-form" style="text-align:center;">
         <div style="font-weight:800;font-size:18px;color:var(--danger);margin-bottom:10px;">پەیوەندی بە Google Sheets سەرنەکەوت</div>
         <div style="font-size:13px;color:var(--muted);line-height:1.9;margin-bottom:20px;">
-          تکایە پەیوەندی ئینتەرنێت بپشکنە، یان دڵنیابەرەوە کە SHEETS_URL لە ناو کۆدەکەدا ڕاستن و Apps Scriptـەکە بە دروستی Deploy کراوە.
+          تکایە پەیوەندی ئینتەرنێت بپشکنە، یان دڵنیابەرەوە کە SHEETS_URL و Web App URL لە ناو کۆدەکەدا ڕاستن و Apps Scriptـەکە بە دروستی Deploy کراوە.
         </div>
         <button class="btn btn-primary" onclick="retryLoad()">هەوڵدانەوە</button>
       </div>
@@ -933,22 +962,17 @@ function renderDashboard(){
   const today = todayStr();
   const todayCount = state.attendance.filter(a=>a.date===today).length;
   const cards = [
-    { label:'کۆی قوتابیان', value: state.students.length, icon: ICONS.student, bg:'var(--green-pale)', color:'var(--green)', click:"showStudentsByCity('کۆی قوتابیان بە پێی شار', state.students)" },
-    { label:'کۆی کۆرسەکان', value: state.courses.length, icon: ICONS.course, bg:'var(--navy-soft)', color:'var(--navy)', click:"showCoursesWithStudents()" },
-    { label:'ئامادەیی ئەمڕۆ', value: todayCount, icon: ICONS.attendance, bg:'var(--green-pale)', color:'var(--green)', click:"showAttendanceByCity('ئامادەیی ئەمڕۆ بە پێی شار', state.attendance.filter(a=>a.date===today))" },
-    { label:'کۆی تۆمارەکانی ئامادەیی', value: state.attendance.length, icon: ICONS.report, bg:'var(--navy-soft)', color:'var(--navy)', click:"showAttendanceByCity('کۆی تۆمارەکانی ئامادەیی بە پێی شار', state.attendance)" },
+    { label:'کۆی قوتابیان', value: state.students.length, icon: ICONS.student, bg:'var(--green-pale)', color:'var(--green)' },
+    { label:'کۆی کۆرسەکان', value: state.courses.length, icon: ICONS.course, bg:'var(--navy-soft)', color:'var(--navy)' },
+    { label:'ئامادەیی ئەمڕۆ', value: todayCount, icon: ICONS.attendance, bg:'var(--green-pale)', color:'var(--green)' },
+    { label:'کۆی تۆمارەکانی ئامادەیی', value: state.attendance.length, icon: ICONS.report, bg:'var(--navy-soft)', color:'var(--navy)' },
   ];
   const recent = [...state.attendance].sort((a,b)=> (b.date+b.time).localeCompare(a.date+a.time)).slice(0,8);
-  const todayCityCounts = {};
-  state.attendance.filter(a=>a.date===today).forEach(a=>{
-    const s = studentById(a.studentId);
-    const city = s && s.city ? s.city : 'شار دیارینەکراوە';
-    todayCityCounts[city] = (todayCityCounts[city]||0) + 1;
-  });
+
   return `
   <div class="grid grid-4" style="margin-bottom:18px;">
     ${cards.map(c=>`
-      <div class="card stat-card clickable" onclick="${c.click}" title="کلیک بکە بۆ وردەکاری">
+      <div class="card stat-card">
         <div class="icon-wrap" style="background:${c.bg};color:${c.color};">${c.icon}</div>
         <div class="label">${c.label}</div>
         <div class="value">${c.value}</div>
@@ -957,70 +981,35 @@ function renderDashboard(){
   <div class="grid grid-2">
     <div class="card">
       <h3>${ICONS.attendance.replace('width="24"','width="17"')} دوایین تۆمارەکانی ئامادەیی</h3>
-      ${Object.keys(todayCityCounts).length ? `
-        <div style="font-size:11.5px;color:var(--muted);margin-bottom:6px;">ژمارەی ئامادەبووانی ئەمڕۆ بە پێی شار</div>
-        <div class="city-summary">${Object.entries(todayCityCounts).sort((a,b)=>b[1]-a[1]).map(([city,count])=>`<span class="city-pill">${city} <strong>${count}</strong></span>`).join('')}</div>` : ''}
       ${recent.length===0 ? emptyState('هیچ تۆمارێکی ئامادەیی نییە') : `
-      <div class="table-wrap" style="margin-top:12px;"><table>
-        <thead><tr><th>قوتابی</th><th>شار</th><th>کۆرس</th><th>بەروار</th><th>کات</th><th>شێواز</th></tr></thead>
-        <tbody>${recent.map(a=>{
-          const s=studentById(a.studentId);
-          return `<tr><td>${studentName(a.studentId)}</td><td><span class="badge badge-gray">${s&&s.city?s.city:'—'}</span></td><td><span class="badge badge-navy">${courseName(a.courseId)}</span></td><td>${a.date}</td><td>${a.time}</td><td>${a.method==='qr'?'<span class="badge badge-green">کیو ئار</span>':'<span class="badge badge-gray">دەستی</span>'}</td></tr>`;
-        }).join('')}</tbody>
+      <div class="table-wrap"><table>
+        <thead><tr><th>قوتابی</th><th>کۆرس</th><th>بەروار</th><th>کات</th><th>شێواز</th></tr></thead>
+        <tbody>
+          ${recent.map(a=>`
+            <tr>
+              <td>${studentName(a.studentId)}</td>
+              <td><span class="badge badge-navy">${courseName(a.courseId)}</span></td>
+              <td>${a.date}</td>
+              <td>${a.time}</td>
+              <td>${a.method==='qr' ? '<span class="badge badge-green">کیو ئار</span>' : '<span class="badge badge-gray">دەستی</span>'}</td>
+            </tr>`).join('')}
+        </tbody>
       </table></div>`}
     </div>
     <div class="card">
       <h3>${ICONS.course.replace('width="24"','width="17"')} کۆرسەکان</h3>
       ${state.courses.length===0 ? emptyState('هیچ کۆرسێک زیاد نەکراوە') : `
-      <div style="display:flex;flex-direction:column;gap:10px;">${state.courses.map(c=>{
-        const cnt=state.students.filter(s=>s.courseIds.includes(c.id)).length;
-        return `<div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg);padding:11px 14px;border-radius:10px;cursor:pointer;" onclick="showCourseStudents('${c.id}')"><span style="font-weight:700;font-size:13.5px;">${c.name}</span><span class="badge badge-green">${cnt} قوتابی</span></div>`;
-      }).join('')}</div>`}
+      <div style="display:flex;flex-direction:column;gap:10px;">
+        ${state.courses.map(c=>{
+          const cnt = state.students.filter(s=>s.courseIds.includes(c.id)).length;
+          return `<div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg);padding:11px 14px;border-radius:10px;">
+            <span style="font-weight:700;font-size:13.5px;">${c.name}</span>
+            <span class="badge badge-green">${cnt} قوتابی</span>
+          </div>`;
+        }).join('')}
+      </div>`}
     </div>
   </div>`;
-}
-
-function showStudentsByCity(title, students){
-  const groups={};
-  (students||[]).forEach(s=>{const city=s.city||'شار دیارینەکراوە';(groups[city] ||= []).push(s);});
-  const cities=Object.keys(groups).sort((a,b)=>a.localeCompare(b,'ckb'));
-  const body=cities.length?cities.map(city=>`
-    <div style="margin-bottom:16px;">
-      <div style="display:flex;align-items:center;justify-content:space-between;background:var(--green-pale);padding:10px 12px;border-radius:10px;margin-bottom:8px;"><strong>${city}</strong><span class="badge badge-green">${groups[city].length} قوتابی</span></div>
-      <div style="display:flex;flex-direction:column;gap:7px;">${groups[city].map(s=>`
-        <div style="display:flex;align-items:center;gap:10px;background:var(--bg);padding:9px 10px;border-radius:9px;cursor:pointer;" onclick="closeModal();go('profiles');setTimeout(()=>selectProfile('${s.id}'),0)">
-          ${s.photoUrl?`<img src="${photoSrc(s.photoUrl)}" alt="" style="width:34px;height:34px;border-radius:50%;object-fit:cover;flex:none;" onerror="this.outerHTML='<div class=&quot;avatar&quot; style=&quot;width:34px;height:34px;font-size:12px;&quot;>${initials(s.fullName)}</div>'">`:`<div class="avatar" style="width:34px;height:34px;font-size:12px;">${initials(s.fullName)}</div>`}
-          <div style="flex:1;"><div style="font-weight:700;font-size:13px;">${s.fullName}</div><div style="font-size:11px;color:var(--muted);">${s.mobile||''}</div></div>
-        </div>`).join('')}</div>
-    </div>`).join(''):emptyState('هیچ قوتابیەک نییە');
-  openModal(title,body);
-}
-
-function showCoursesWithStudents(){
-  const body=state.courses.length?state.courses.map(c=>{
-    const students=state.students.filter(s=>s.courseIds.includes(c.id));
-    return `<div style="margin-bottom:16px;"><div style="display:flex;align-items:center;justify-content:space-between;background:var(--navy-soft);padding:10px 12px;border-radius:10px;margin-bottom:8px;"><strong>${c.name}</strong><span class="badge badge-navy">${students.length} قوتابی</span></div>
-    ${students.length?`<div style="display:flex;flex-direction:column;gap:7px;">${students.map(s=>`<div style="display:flex;align-items:center;gap:10px;background:var(--bg);padding:9px 10px;border-radius:9px;cursor:pointer;" onclick="closeModal();go('profiles');setTimeout(()=>selectProfile('${s.id}'),0)"><div class="avatar" style="width:34px;height:34px;font-size:12px;">${initials(s.fullName)}</div><div style="font-weight:700;font-size:13px;">${s.fullName}</div></div>`).join('')}</div>`:`<div style="font-size:12px;color:var(--muted);padding:4px;">هیچ قوتابییەک لەم کۆرسەدا نییە.</div>`}</div>`;
-  }).join(''):emptyState('هیچ کۆرسێک نییە');
-  openModal('کۆرسەکان و قوتابیان',body);
-}
-
-function showCourseStudents(courseId){
-  const c=courseById(courseId);
-  if(!c)return;
-  showStudentsByCity(`قوتابیانی ${c.name} بە پێی شار`,state.students.filter(s=>s.courseIds.includes(courseId)));
-}
-
-function showAttendanceByCity(title,records){
-  const groups={};
-  (records||[]).forEach(a=>{const s=studentById(a.studentId);const city=s&&s.city?s.city:'شار دیارینەکراوە';(groups[city] ||= []).push(a);});
-  const cities=Object.keys(groups);
-  const body=cities.length?cities.sort((a,b)=>groups[b].length-groups[a].length).map(city=>`
-    <div style="margin-bottom:16px;">
-      <div style="display:flex;align-items:center;justify-content:space-between;background:var(--green-pale);padding:10px 12px;border-radius:10px;margin-bottom:8px;"><strong>${city}</strong><span class="badge badge-green">${groups[city].length} تۆمار</span></div>
-      <div style="display:flex;flex-direction:column;gap:7px;">${groups[city].sort((a,b)=>b.time.localeCompare(a.time)).map(a=>`<div style="display:flex;align-items:center;gap:10px;background:var(--bg);padding:9px 10px;border-radius:9px;"><div class="avatar" style="width:34px;height:34px;font-size:12px;">${initials(studentName(a.studentId))}</div><div style="flex:1;"><div style="font-weight:700;font-size:13px;">${studentName(a.studentId)}</div><div style="font-size:11px;color:var(--muted);">${courseName(a.courseId)} · ${a.date} · ${a.time}</div></div></div>`).join('')}</div>
-    </div>`).join(''):emptyState('هیچ تۆماری ئامادەیی نییە');
-  openModal(title,body);
 }
 
 function emptyState(msg){
@@ -1197,10 +1186,7 @@ async function submitRegister(ev){
   submitBtn.disabled = false;
   submitBtn.innerHTML = originalBtnHtml;
   showIdCard(student.id);
-  const vc=document.getElementById('viewContent');
-  const scrollY=vc?vc.scrollTop:0;
-  if(vc)vc.innerHTML=renderView();
-  if(vc)vc.scrollTop=scrollY;
+  render();
 }
 
 function showIdCard(studentId){
@@ -1377,10 +1363,7 @@ function renderCourses(){
             return `<tr>
               <td style="font-weight:700;">${c.name}</td>
               <td><span class="badge badge-green">${cnt}</span></td>
-              <td style="display:flex;gap:6px;justify-content:flex-end;">
-                <button class="btn btn-outline btn-sm" onclick="openManageCourseStudents('${c.id}')">قوتابیان</button>
-                <button class="btn btn-danger btn-sm" onclick="deleteCourse('${c.id}')">${ICONS.trash.replace('width="24"','width="14"')}</button>
-              </td>
+              <td><button class="btn btn-danger btn-sm" onclick="deleteCourse('${c.id}')">${ICONS.trash.replace('width="24"','width="14"')}</button></td>
             </tr>`;
           }).join('')}
         </tbody>
@@ -1393,81 +1376,17 @@ async function submitAddCourse(ev){
   const input = document.getElementById('newCourseName');
   const name = input.value.trim();
   if(!name) return;
-  if(state.courses.some(c=>String(c.name||'').trim().toLowerCase()===name.toLowerCase())){
-    showToast('ئەم ناوی کۆرسە پێشتر هەیە', 'error');
-    return;
-  }
-  const newCourse = { id: uid('crs'), name, createdAt: new Date().toISOString() };
-  state.courses.push(newCourse);
-  normalizeStateData();
-  try{
-    await saveCourses();
-    showToast('کۆرس زیادکرا — ئێستا قوتابیانی پێشووت هەڵبژێرە', 'success');
-    render();
-    openManageCourseStudents(newCourse.id);
-  }catch(e){
-    state.courses = state.courses.filter(c=>c.id!==newCourse.id);
-    showToast('زیادکردنی کۆرس و هاوکاتکردن سەرنەکەوت', 'error');
-    render();
-  }
+  state.courses.push({ id: uid('crs'), name, createdAt: new Date().toISOString() });
+  await saveCourses();
+  showToast('کۆرس زیادکرا', 'success');
+  render();
 }
 async function deleteCourse(id){
   const cnt = state.students.filter(s=>s.courseIds.includes(id)).length;
   if(!confirm(`دڵنیایت لە سڕینەوەی ئەم کۆرسە؟${cnt>0 ? ' ('+cnt+' قوتابی تیایدا تۆمارکراون)' : ''}`)) return;
   state.courses = state.courses.filter(c=>c.id!==id);
-  state.students.forEach(s=>{ s.courseIds = (s.courseIds||[]).filter(cid=>cid!==id); });
-  await saveStudents();
+  await saveCourses();
   showToast('کۆرس سڕایەوە', 'info');
-  render();
-}
-
-/* دەکرێت کۆرسێکی نوێ یان هەر کۆرسێکی هەبوو بۆ چەند قوتابیێکی تۆمارکراو زیاد بکرێت
-   یان لێیان لابردرێت، بەبێ ئەوەی پێویست بکات هەر قوتابیەک بە تاکی دەستکاری بکرێت. */
-function openManageCourseStudents(courseId){
-  normalizeStateData();
-  const c = courseById(courseId);
-  if(!c) return;
-  const body = state.students.length===0 ? emptyState('هیچ قوتابیەک تۆمار نەکراوە') : `
-  <div class="field" style="margin-bottom:10px;">
-    <input type="text" id="mcsSearch" placeholder="گەڕان بەدوای قوتابیدا..." oninput="filterManageCourseStudents()">
-  </div>
-  <div id="mcsList" style="display:flex;flex-direction:column;gap:7px;max-height:420px;overflow:auto;">
-    ${state.students.map(s=>`
-      <label class="mcs-row" data-name="${s.fullName.toLowerCase()}" style="display:flex;align-items:center;gap:10px;background:var(--bg);padding:9px 10px;border-radius:9px;cursor:pointer;">
-        <input type="checkbox" value="${s.id}" ${s.courseIds.includes(courseId)?'checked':''}>
-        <div class="avatar" style="width:30px;height:30px;font-size:11px;">${initials(s.fullName)}</div>
-        <div style="flex:1;">
-          <div style="font-weight:700;font-size:13px;">${s.fullName}</div>
-          <div style="font-size:11px;color:var(--muted);">${s.courseIds.map(id=>courseName(id)).join('، ') || 'بەبێ کۆرس'}</div>
-        </div>
-      </label>`).join('')}
-  </div>`;
-  const foot = `<button class="btn btn-outline" onclick="closeModal()">داخستن</button>
-    <button class="btn btn-primary" onclick="saveCourseStudents('${courseId}')">پاشەکەوتکردن</button>`;
-  openModal(`قوتابیانی ${c.name}`, body, foot);
-}
-function filterManageCourseStudents(){
-  const q = (document.getElementById('mcsSearch').value || '').trim().toLowerCase();
-  document.querySelectorAll('#mcsList .mcs-row').forEach(row=>{
-    row.style.display = row.dataset.name.includes(q) ? 'flex' : 'none';
-  });
-}
-async function saveCourseStudents(courseId){
-  const list = document.getElementById('mcsList');
-  if(!list) return;
-  normalizeStateData();
-  const checked = new Set(Array.from(list.querySelectorAll('input[type=checkbox]:checked')).map(i=>String(i.value)));
-  let changed = 0;
-  state.students.forEach(s=>{
-    s.courseIds = Array.isArray(s.courseIds) ? s.courseIds.map(String) : [];
-    const has = s.courseIds.includes(String(courseId));
-    const shouldHave = checked.has(String(s.id));
-    if(shouldHave && !has){ s.courseIds.push(String(courseId)); changed++; }
-    if(!shouldHave && has){ s.courseIds = s.courseIds.filter(id=>id!==String(courseId)); changed++; }
-  });
-  await saveStudents();
-  closeModal();
-  showToast(changed>0 ? `${changed} قوتابی نوێکرایەوە` : 'هیچ گۆڕانکارییەک نەکرا', 'success');
   render();
 }
 
@@ -1582,7 +1501,7 @@ function renderTodayAttendanceList(){
         <div class="avatar" style="width:32px;height:32px;font-size:11.5px;">${initials(studentName(a.studentId))}</div>
         <div style="flex:1;">
           <div style="font-weight:700;font-size:13px;">${studentName(a.studentId)}</div>
-          <div style="font-size:11px;color:var(--muted);">${(studentById(a.studentId)||{}).city || 'شار دیارینەکراوە'} · ${a.time} · ${a.method==='qr'?'کیو ئار':'دەستی'}</div>
+          <div style="font-size:11px;color:var(--muted);">${a.time} · ${a.method==='qr'?'کیو ئار':'دەستی'}</div>
         </div>
       </div>`).join('')}
   </div>`;
@@ -1671,21 +1590,13 @@ async function onQrDetected(data){
 }
 
 /* ==================== REPORT ==================== */
-function getReportRows(){
-  return state.attendance.filter(a=>{
-    const dateOk = a.date === state.reportDate;
-    const courseOk = state.reportCourseId==='all' || a.courseId===state.reportCourseId;
-    const student = studentById(a.studentId);
-    const city = student && student.city ? student.city : 'شار دیارینەکراوە';
-    const cityOk = state.reportCityFilter==='all' || city===state.reportCityFilter;
-    return dateOk && courseOk && cityOk;
-  }).sort((a,b)=>a.time.localeCompare(b.time));
-}
-
 function renderReport(){
   if(!state.reportDate) state.reportDate = todayStr();
-  const rows = getReportRows();
-  const cities = uniqueCities();
+  const rows = state.attendance.filter(a=>{
+    const dateOk = a.date === state.reportDate;
+    const courseOk = state.reportCourseId==='all' || a.courseId===state.reportCourseId;
+    return dateOk && courseOk;
+  }).sort((a,b)=>a.time.localeCompare(b.time));
 
   return `
   <div class="toolbar">
@@ -1697,158 +1608,49 @@ function renderReport(){
         <option value="all" ${state.reportCourseId==='all'?'selected':''}>هەموو کۆرسەکان</option>
         ${state.courses.map(c=>`<option value="${c.id}" ${state.reportCourseId===c.id?'selected':''}>${c.name}</option>`).join('')}
       </select>
-      <select onchange="setReportCity(this.value)">
-        <option value="all" ${state.reportCityFilter==='all'?'selected':''}>هەموو شارەکان</option>
-        ${cities.map(city=>`<option value="${escAttr(city)}" ${state.reportCityFilter===city?'selected':''}>${city}</option>`).join('')}
-      </select>
     </div>
     <div class="toolbar-right">
-      <button class="btn btn-primary btn-sm" onclick="printDailyReport()">${ICONS.report.replace('width="24"','width="14"')} چاپکردنی ڕاپۆرت</button>
       <button class="btn btn-outline btn-sm" onclick="exportCsv()">${ICONS.download.replace('width="24"','width="14"')} داگرتنی CSV</button>
       <button class="btn btn-navy btn-sm" onclick="forceResync()">${ICONS.cloud.replace('width="24"','width="14"')} نوێکردنەوەی داتا</button>
     </div>
   </div>
   <div class="card">
-    <h3>${ICONS.report.replace('width="24"','width="17"')} ئامادەیی ڕۆژی ${state.reportDate} (${rows.length} تۆمار${state.reportCityFilter==='all'?'':' - '+state.reportCityFilter})</h3>
+    <h3>${ICONS.report.replace('width="24"','width="17"')} ئامادەیی ڕۆژی ${state.reportDate} (${rows.length} تۆمار)</h3>
     ${rows.length===0 ? emptyState('هیچ تۆمارێکی ئامادەیی نییە بۆ ئەم ڕۆژە') : `
     <div class="table-wrap"><table>
-      <thead><tr><th>#</th><th>ناوی قوتابی</th><th>شار</th><th>کۆرس</th><th>کات</th><th>شێواز</th><th>تۆمارکەر</th></tr></thead>
+      <thead><tr><th>#</th><th>ناوی قوتابی</th><th>کۆرس</th><th>کات</th><th>شێواز</th><th>تۆمارکەر</th></tr></thead>
       <tbody>
-        ${rows.map((a,i)=>{
-          const s = studentById(a.studentId);
-          const city = s && s.city ? s.city : 'شار دیارینەکراوە';
-          return `<tr>
+        ${rows.map((a,i)=>`
+          <tr>
             <td>${i+1}</td>
             <td style="font-weight:700;">${studentName(a.studentId)}</td>
-            <td><span class="badge badge-green">${city}</span></td>
             <td><span class="badge badge-navy">${courseName(a.courseId)}</span></td>
             <td>${a.time}</td>
             <td>${a.method==='qr'?'<span class="badge badge-green">کیو ئار</span>':'<span class="badge badge-gray">دەستی</span>'}</td>
             <td style="font-size:11.5px;color:var(--muted);">${a.markedBy}</td>
-          </tr>`;
-        }).join('')}
+          </tr>`).join('')}
       </tbody>
     </table></div>`}
   </div>`;
 }
-
 function onReportDateChange(v){ state.reportDate = v; document.getElementById('viewContent').innerHTML = renderView(); }
 function onReportCourseChange(v){ state.reportCourseId = v; document.getElementById('viewContent').innerHTML = renderView(); }
 
-function printDailyReport(){
-  const rows = getReportRows();
-  if(rows.length===0){
-    showToast('هیچ تۆمارێکی ئامادەیی نییە بۆ چاپکردن', 'error');
-    return;
-  }
-
-  const groups = {};
-  rows.forEach(a=>{
-    const s = studentById(a.studentId);
-    const city = s && s.city ? s.city : 'شار دیارینەکراوە';
-    (groups[city] ||= []).push(a);
-  });
-
-  const selectedCourse = state.reportCourseId==='all' ? 'هەموو کۆرسەکان' : courseName(state.reportCourseId);
-  const selectedCity = state.reportCityFilter==='all' ? 'هەموو شارەکان' : state.reportCityFilter;
-  const escapeHtml = v => String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-
-  const groupsHtml = Object.keys(groups).sort((a,b)=>a.localeCompare(b,'ku')).map(city=>{
-    const list = groups[city].sort((a,b)=>a.time.localeCompare(b.time));
-    return `
-      <section class="city-section">
-        <div class="city-head">
-          <h2>${escapeHtml(city)}</h2>
-          <span>${list.length} ئامادەبوو</span>
-        </div>
-        <table>
-          <thead>
-            <tr><th>#</th><th>ناوی قوتابی</th><th>کۆرس</th><th>کات</th><th>شێواز</th></tr>
-          </thead>
-          <tbody>
-            ${list.map((a,i)=>`
-              <tr>
-                <td>${i+1}</td>
-                <td>${escapeHtml(studentName(a.studentId))}</td>
-                <td>${escapeHtml(courseName(a.courseId))}</td>
-                <td>${escapeHtml(a.time)}</td>
-                <td>${a.method==='qr'?'کیو ئار':'دەستی'}</td>
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>
-      </section>`;
-  }).join('');
-
-  const win = window.open('', '_blank', 'width=1000,height=800');
-  if(!win){
-    showToast('ڕێگە بە کردنەوەی پەنجەرەی چاپ بدە (Popup blocker)', 'error');
-    return;
-  }
-
-  win.document.open();
-  win.document.write(`<!DOCTYPE html>
-  <html lang="ckb" dir="rtl">
-  <head>
-    <meta charset="UTF-8">
-    <title>ڕاپۆرتی ئامادەیی ${escapeHtml(state.reportDate)}</title>
-    <style>
-      @page{size:A4; margin:12mm;}
-      *{box-sizing:border-box;}
-      body{font-family:Tahoma,Arial,sans-serif;color:#122318;direction:rtl;margin:0;background:#fff;}
-      .report{max-width:100%;margin:auto;}
-      .header{text-align:center;border-bottom:2px solid #0f8a55;padding-bottom:12px;margin-bottom:16px;}
-      .header h1{font-size:20px;margin:0 0 8px;color:#0B2545;}
-      .meta{display:flex;flex-wrap:wrap;justify-content:center;gap:12px;font-size:12px;color:#43534b;}
-      .meta span{padding:5px 10px;background:#f3f7f5;border-radius:8px;}
-      .city-section{margin:0 0 18px;break-inside:avoid;}
-      .city-head{display:flex;align-items:center;justify-content:space-between;background:#e5f6ee;border-right:5px solid #0f8a55;padding:9px 12px;margin-bottom:7px;}
-      .city-head h2{margin:0;font-size:16px;color:#0B2545;}
-      .city-head span{font-size:12px;font-weight:bold;color:#0f8a55;}
-      table{width:100%;border-collapse:collapse;font-size:12px;}
-      th,td{border:1px solid #dce7e1;padding:7px 8px;text-align:right;}
-      th{background:#f3f7f5;color:#0B2545;}
-      .footer{margin-top:18px;padding-top:8px;border-top:1px solid #dce7e1;font-size:11px;color:#6b7d74;text-align:center;}
-      @media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
-    </style>
-  </head>
-  <body>
-    <div class="report">
-      <div class="header">
-        <h1>ڕاپۆرتی ڕۆژانەی ئامادەیی</h1>
-        <div class="meta">
-          <span>بەروار: ${escapeHtml(state.reportDate)}</span>
-          <span>کۆرس: ${escapeHtml(selectedCourse)}</span>
-          <span>شار: ${escapeHtml(selectedCity)}</span>
-          <span>کۆی ئامادەبووان: ${rows.length}</span>
-        </div>
-      </div>
-      ${groupsHtml}
-      <div class="footer">دروستکراوە لەلایەن سیستەمی بەڕێوەبردنی ئامادەیی</div>
-    </div>
-    <script>
-      window.onload = function(){
-        setTimeout(function(){ window.print(); }, 300);
-      };
-    <\/script>
-  </body>
-  </html>`);
-  win.document.close();
-}
-
 function exportCsv(){
-  const rows = getReportRows();
+  const rows = state.attendance.filter(a=>{
+    const dateOk = a.date === state.reportDate;
+    const courseOk = state.reportCourseId==='all' || a.courseId===state.reportCourseId;
+    return dateOk && courseOk;
+  });
   if(rows.length===0){ showToast('هیچ داتایەک نییە بۆ ناردن', 'error'); return; }
-  let csv = 'ناوی قوتابی,شار,کۆرس,بەروار,کات,شێواز,تۆمارکەر\n';
+  let csv = 'ناوی قوتابی,کۆرس,بەروار,کات,شێواز,تۆمارکەر\n';
   rows.forEach(a=>{
-    const s = studentById(a.studentId);
-    const city = s && s.city ? s.city : 'شار دیارینەکراوە';
-    csv += `"${studentName(a.studentId)}","${city}","${courseName(a.courseId)}","${a.date}","${a.time}","${a.method==='qr'?'کیو ئار':'دەستی'}","${a.markedBy}"\n`;
+    csv += `"${studentName(a.studentId)}","${courseName(a.courseId)}","${a.date}","${a.time}","${a.method==='qr'?'کیو ئار':'دەستی'}","${a.markedBy}"\n`;
   });
   const blob = new Blob(["\uFEFF"+csv], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
-  link.href = url; link.download = `raport_${state.reportDate}_${state.reportCityFilter==='all'?'all':state.reportCityFilter}.csv`;
+  link.href = url; link.download = `raport_${state.reportDate}.csv`;
   link.click();
   URL.revokeObjectURL(url);
   showToast('فایلی CSV دابەزێنرا', 'success');
@@ -1857,11 +1659,7 @@ function exportCsv(){
 /* داتا خۆکارانە لەگەڵ هەموو گۆڕانکارییەک دەنێردرێت بۆ Google Sheets (بڕوانە saveCourses/saveStudents/...).
    ئەم فەنکشنە بۆ ئەوەیە کە بە دەستی نوێترین داتا لە شیتەکەوە بهێنرێتەوە، بۆ نموونە کاتێک چەند کارمەند پێکەوە کاردەکەن. */
 async function forceResync(){
-  if(syncDirty || syncInFlight || syncPending){
-    showToast('هێشتا گۆڕانکارییەکان پاشەکەوت دەکرێن؛ تکایە چاوەڕێ بکە', 'info');
-    return;
-  }
-  if(!isSheetsConfigured()){ showToast('سەرەتا پەیوەندیی Web App بپشکنە', 'error'); go('settings'); return; }
+  if(!isSheetsConfigured()){ showToast('سەرەتا لینک و TOKENی Google Sheets لە ناو کۆدی فایلەکەدا دابنێ', 'error'); go('settings'); return; }
   try{
     showToast('وەرگرتنی نوێترین داتا...', 'info');
     const data = await apiGet();
@@ -1890,79 +1688,39 @@ async function deleteStudent(id){
   render();
 }
 
-
-function uniqueCities(){
-  return [...new Set(state.students.map(s=>s.city).filter(Boolean))];
-}
-function cityGroupsHtml(students, onSelect){
-  const cities=[...new Set(students.map(s=>s.city||'بێ شار'))];
-  return cities.map(city=>{
-    const list=students.filter(s=>(s.city||'بێ شار')===city);
-    return `<div class="city-group">
-      <div class="city-group-head"><span>${city}</span><span class="count">${list.length} قوتابی</span></div>
-      <div class="city-group-body">
-        ${list.map(s=>`<div style="display:flex;align-items:center;gap:10px;padding:9px;border-radius:9px;cursor:pointer;" onclick="${onSelect}('${s.id}')">
-          ${s.photoUrl ? `<img src="${photoSrc(s.photoUrl)}" style="width:38px;height:38px;border-radius:50%;object-fit:cover;">` : `<div class="avatar" style="width:38px;height:38px;">${initials(s.fullName)}</div>`}
-          <div><div style="font-weight:800">${s.fullName}</div><div style="font-size:12px;color:var(--muted)">${s.mobile}</div></div>
-        </div>`).join('')}
-      </div>
-    </div>`;
-  }).join('');
-}
-function setProfileCityFilter(city){state.profileCityFilter=city;document.getElementById('viewContent').innerHTML=renderView();}
-function setAttendanceCity(city){state.attendanceCityFilter=city;document.getElementById('viewContent').innerHTML=renderView();}
-function setReportCity(city){state.reportCityFilter=city;document.getElementById('viewContent').innerHTML=renderView();}
-function showStudentPhoto(id){
-  const s=studentById(id); if(!s||!s.photoUrl)return;
-  openModal('وێنەی قوتابی',`<div style="text-align:center"><img src="${photoSrc(s.photoUrl)}" alt="${escAttr(s.fullName)}" style="max-width:100%;max-height:70vh;object-fit:contain;border-radius:14px;"><div style="margin-top:10px;font-weight:800">${s.fullName}</div></div>`,
-  `<button class="btn btn-primary" onclick="closeModal()">داخستن</button>`);
-}
-
 /* ==================== PROFILES / SEARCH ==================== */
-function renderProfileSearchResults(){
-  const q=(state.searchQuery||'').trim().toLowerCase();
-  const results=q?state.students.filter(s=>(s.fullName||'').toLowerCase().includes(q)||(s.mobile||'').toLowerCase().includes(q)||(s.city||'').toLowerCase().includes(q)):state.students;
-  return results.length===0?emptyState('هیچ قوتابیەک نەدۆزرایەوە'):`<div style="display:flex;flex-direction:column;gap:8px;max-height:520px;overflow-y:auto;">${results.map(s=>`
-    <div style="display:flex;align-items:center;gap:10px;background:${state.selectedStudentId===s.id?'var(--green-pale)':'var(--bg)'};padding:10px 12px;border-radius:10px;cursor:pointer;" onclick="selectProfile('${s.id}')">
-      ${s.photoUrl?`<img src="${photoSrc(s.photoUrl)}" alt="" style="width:32px;height:32px;border-radius:50%;object-fit:cover;flex:none;" onerror="this.outerHTML='<div class=&quot;avatar&quot; style=&quot;width:32px;height:32px;font-size:11.5px;&quot;>${initials(s.fullName)}</div>'">`:`<div class="avatar" style="width:32px;height:32px;font-size:11.5px;">${initials(s.fullName)}</div>`}
-      <div style="flex:1;"><div style="font-weight:700;font-size:13px;">${s.fullName}</div><div style="font-size:11px;color:var(--muted);">${s.courseIds.length} کۆرس · ${s.mobile}${s.city?' · '+s.city:''}</div></div>
-    </div>`).join('')}</div>`;
-}
 function renderProfiles(){
-  const q=(state.searchQuery||'').trim().toLowerCase();
-  const base=state.profileCityFilter==='all'?state.students:state.students.filter(s=>s.city===state.profileCityFilter);
-  const results=q?base.filter(s=>(s.fullName||'').toLowerCase().includes(q)||(s.mobile||'').toLowerCase().includes(q)||(s.city||'').toLowerCase().includes(q)):base;
-  const selected=state.selectedStudentId?studentById(state.selectedStudentId):null;
-  const cities=uniqueCities();
-  return `<div class="grid grid-2">
+  const q = (state.searchQuery||'').trim().toLowerCase();
+  const results = q ? state.students.filter(s=>s.fullName.toLowerCase().includes(q)) : state.students;
+  const selected = state.selectedStudentId ? studentById(state.selectedStudentId) : null;
+
+  return `
+  <div class="grid grid-2">
     <div class="card">
       <h3>${ICONS.search.replace('width="24"','width="17"')} گەڕان بەدوای قوتابی</h3>
-      <div class="search-box" style="margin-bottom:12px;">${ICONS.search}<input type="text" placeholder="ناو، مۆبایل یان شار بنووسە..." value="${escAttr(state.searchQuery||'')}" oninput="onProfileSearch(this.value)" style="width:100%;"></div>
-      <div class="city-filter-row">
-        <button class="city-filter-btn ${state.profileCityFilter==='all'?'active':''}" onclick="setProfileCityFilter('all')">هەموو شارەکان</button>
-        ${cities.map(c=>`<button class="city-filter-btn ${state.profileCityFilter===c?'active':''}" onclick="setProfileCityFilter('${escAttr(c)}')">${c} (${state.students.filter(s=>s.city===c).length})</button>`).join('')}
+      <div class="search-box" style="margin-bottom:14px;">
+        ${ICONS.search}
+        <input type="text" placeholder="ناوی قوتابی بنووسە..." value="${state.searchQuery||''}" oninput="onProfileSearch(this.value)" style="width:100%;">
       </div>
-      ${results.length===0?emptyState('هیچ قوتابیەک نەدۆزرایەوە'):cityGroupsHtml(results,'selectProfile')}
+      ${results.length===0 ? emptyState('هیچ قوتابیەک نەدۆزرایەوە') : `
+      <div style="display:flex;flex-direction:column;gap:8px;max-height:520px;overflow-y:auto;">
+        ${results.map(s=>`
+          <div style="display:flex;align-items:center;gap:10px;background:${state.selectedStudentId===s.id?'var(--green-pale)':'var(--bg)'};padding:10px 12px;border-radius:10px;cursor:pointer;" onclick="selectProfile('${s.id}')">
+            <div class="avatar" style="width:32px;height:32px;font-size:11.5px;">${initials(s.fullName)}</div>
+            <div style="flex:1;">
+              <div style="font-weight:700;font-size:13px;">${s.fullName}</div>
+              <div style="font-size:11px;color:var(--muted);">${s.courseIds.length} کۆرس · ${s.mobile}</div>
+            </div>
+          </div>`).join('')}
+      </div>`}
     </div>
-    <div class="card">${selected?renderStudentProfile(selected):`<h3>${ICONS.profile.replace('width="24"','width="17"')} پرۆفایل</h3>${emptyState('قوتابیەک هەڵبژێرە بۆ بینینی زانیارییەکانی')}`}</div>
+    <div class="card">
+      ${selected ? renderStudentProfile(selected) : `<h3>${ICONS.profile.replace('width="24"','width="17"')} پرۆفایل</h3>${emptyState('قوتابیەک هەڵبژێرە بۆ بینینی زانیارییەکانی')}`}
+    </div>
   </div>`;
 }
-function onProfileSearch(v){
-  state.searchQuery=v;
-  const el=document.getElementById('profileSearchResults');
-  if(el)el.innerHTML=renderProfileSearchResults();
-}
-function selectProfile(id){
-  state.selectedStudentId=id;
-  const vc=document.getElementById('viewContent');
-  if(vc)vc.innerHTML=renderView();
-}
-
-function showStudentPhoto(studentId){
-  const s=studentById(studentId);
-  if(!s||!s.photoUrl)return;
-  openModal('وێنەی قوتابی',`<div style="display:flex;justify-content:center;align-items:center;padding:4px;"><img src="${photoSrc(s.photoUrl)}" alt="${s.fullName}" style="display:block;max-width:100%;max-height:70vh;border-radius:16px;object-fit:contain;box-shadow:var(--shadow);" onerror="this.style.display='none';"></div><div style="text-align:center;font-weight:800;color:var(--navy);margin-top:12px;">${s.fullName}</div>`,`<button class="btn btn-primary" onclick="closeModal()">داخستن</button>`);
-}
+function onProfileSearch(v){ state.searchQuery = v; document.getElementById('viewContent').innerHTML = renderView(); }
+function selectProfile(id){ state.selectedStudentId = id; document.getElementById('viewContent').innerHTML = renderView(); }
 
 function renderStudentProfile(s){
   const records = state.attendance.filter(a=>a.studentId===s.id).sort((a,b)=>(b.date+b.time).localeCompare(a.date+a.time));
@@ -1973,7 +1731,7 @@ function renderStudentProfile(s){
   return `
   <div class="profile-head">
     ${s.photoUrl
-      ? `<img src="${photoSrc(s.photoUrl)}" alt="${s.fullName}" title="کلیک بکە بۆ گەورەکردنی وێنە" onclick="showStudentPhoto('${s.id}')" style="width:64px;height:64px;border-radius:50%;object-fit:cover;flex:none;box-shadow:var(--shadow-sm);cursor:zoom-in;" onerror="this.outerHTML='<div class=&quot;profile-avatar&quot;>${initials(s.fullName)}</div>'">`
+      ? `<img src="${photoSrc(s.photoUrl)}" alt="${s.fullName}" style="width:56px;height:56px;border-radius:50%;object-fit:cover;flex:none;box-shadow:var(--shadow-sm);" onerror="this.outerHTML='<div class=&quot;profile-avatar&quot;>${initials(s.fullName)}</div>'">`
       : `<div class="profile-avatar">${initials(s.fullName)}</div>`}
     <div style="flex:1;">
       <div style="font-weight:800;font-size:17px;color:var(--navy);">${s.fullName}</div>
@@ -2065,22 +1823,21 @@ async function submitAddAccount(ev){
   const username = document.getElementById('newAccUser').value.trim();
   const password = document.getElementById('newAccPass').value;
   const role = document.getElementById('newAccRole').value;
-  if(!name || !username || !password){ showToast('تکایە هەموو خانەکان پڕبکەرەوە', 'error'); return; }
-  try{
-    const result = await apiPost({action:'accountAdd',session:state.session.token,name,username,password,role});
-    state.accounts = result.accounts || state.accounts;
-    showToast('هەژمار زیادکرا', 'success');
-    render();
-  }catch(e){ showToast(e.message==='duplicate_username'?'ئەم ناوی بەکارهێنەرە پێشتر بەکارهاتووە':'زیادکردنی هەژمار سەرنەکەوت', 'error'); }
+  if(state.accounts.some(a=>a.username===username)){ showToast('ئەم ناوی بەکارهێنەرە پێشتر بەکارهاتووە', 'error'); return; }
+  state.accounts.push({ name, username, password, role });
+  await saveAccounts();
+  showToast('هەژمار زیادکرا', 'success');
+  render();
 }
 async function deleteAccount(username){
-  if(username===state.session.username){ showToast('ناتوانیت هەژماری خۆت بسڕیتەوە', 'error'); return; }
+  const admins = state.accounts.filter(a=>a.role==='admin');
+  const target = state.accounts.find(a=>a.username===username);
+  if(target.role==='admin' && admins.length<=1){ showToast('ناتوانرێت دوایین هەژماری ئەدمین بسڕدرێتەوە', 'error'); return; }
   if(!confirm('دڵنیایت لە سڕینەوەی ئەم هەژمارە؟')) return;
-  try{
-    const result = await apiPost({action:'accountDelete',session:state.session.token,username});
-    state.accounts = result.accounts || state.accounts;
-    showToast('هەژمار سڕایەوە', 'info'); render();
-  }catch(e){ showToast(e.message==='last_admin'?'ناتوانرێت دوایین ئەدمین بسڕدرێتەوە':'سڕینەوەی هەژمار سەرنەکەوت', 'error'); }
+  state.accounts = state.accounts.filter(a=>a.username!==username);
+  await saveAccounts();
+  showToast('هەژمار سڕایەوە', 'info');
+  render();
 }
 
 /* ==================== SETTINGS (admin) ==================== */
@@ -2095,7 +1852,7 @@ function renderSettings(){
         <div style="padding:12px 14px;border-radius:10px;background:#fbfdfc;border:1.5px solid #dfe7e3;font-size:13px;">
           ${isSheetsConfigured()
             ? `<span style="color:var(--green);font-weight:700;">✓ پەیوەست کراوە</span> — ${SHEETS_URL}`
-            : `<span style="color:var(--danger);font-weight:700;">✗ پەیوەست نەکراوە</span> — تەنها لینکى Web App لە ناو کۆدەکەیە؛ هیچ Secret ـێک لێرە دانەنرێت`}
+            : `<span style="color:var(--danger);font-weight:700;">✗ پەیوەست نەکراوە</span> — لینک و TOKENـی خوارەوە لە ناو کۆدی فایلەکەدا دابنێ`}
         </div>
       </div>
       <div class="note-box warn">ئەم سیستەمە لە دوو فایل پێکهاتووە:
@@ -2103,18 +1860,18 @@ function renderSettings(){
           <b>index.html</b> — خودی بەرنامەکە، لەسەر ئینتەرنێت هۆست دەکرێت.<br>
           <b>Code.gs</b> — کۆدی Google Apps Script، لەناو Google Sheet دادەنرێت (بڕوانە خوارەوە).
         </div>
-        دوای دیپلۆیکردنی Code.gs، تەنها لینکی Web App لە SHEETS_URL ـی index.html دابنێ؛ هیچ Secret یان TOKEN لە index.html دانەمێنێ. هەموو کارمەندێک کە هەمان index.html بەکاردەهێنێت خۆکارانە پەیوەست دەبێت.
+        دوای دیپلۆیکردنی Code.gs، لینکی Web App و پەیوەندی Web App لەناو index.html، لە دەقی <code>SHEETS_URL</code> و <code>Web App URL</code> دابنێ، پاشان فایلەکە هۆست بکە. هەموو کارمەندێک کە هەمان index.html بەکاردەهێنێت خۆکارانە پەیوەست دەبێت.
       </div>
       <div style="margin-top:18px;">
         <div style="font-size:12.5px;font-weight:700;color:var(--muted);margin-bottom:8px;">هەنگاوەکانی سازکردنی Google Sheets (یەک جار پێویستە):</div>
         <ol style="font-size:12.5px;color:var(--muted);line-height:2;padding-right:18px;margin:0;">
           <li>Google Sheet نوێ دروست بکە.</li>
           <li>لە مێنیوی Extensions &larr; Apps Script بکەرەوە.</li>
-          <li>ناوەڕۆکی فایلی <b>Code.gs</b> (کە پێکەوە لەگەڵ index.html وەرگیراوە) بکۆپی بکە بۆ ناو Apps Script، و SHEETS_SECRET لە Project Settings → Script Properties دابنێ.</li>
+          <li>ناوەڕۆکی فایلی <b>Code.gs</b> (کە پێکەوە لەگەڵ index.html وەرگیراوە) بکۆپی بکە بۆ ناو Apps Script، و TOKEN بگۆڕە بۆ کۆدێکی نهێنی تایبەت بە خۆت.</li>
           <li>Deploy &larr; New deployment &larr; Web app، Execute as: Me، Who has access: Anyone.</li>
-          <li>لینکی Web App کۆپی بکە لە SHEETS_URL ـی index.html؛ هیچ Secret ـێک لە index.html مەخە.</li>
+          <li>لینکی Web App کۆپی بکە و لەگەڵ هەمان TOKEN لەناو کۆدی index.html دابنێ (وەک سەرەوە باسکرا).</li>
         </ol>
-        <div class="note-box warn" style="margin-top:10px;">تێبینی سەلامەتی: Secret تەنها لە Apps Script Script Properties هەڵبگرە و Code.gs ـی گشتی مەکەوە. Login و permission لەلایەن backend پشکنین دەکرێن.</div>
+        <div class="note-box warn" style="margin-top:10px;">تێبینی سەلامەتی: هەرکەسێک ئەم لینک و کۆدە نهێنییە بزانێت دەتوانێت داتاکان ببینێت. تەنها فایلی index.html بدە بە کەسانی متمانەپێکراو، و فایلی Code.gs (لەگەڵ TOKEN) بە شێوەی گشتی بڵاو مەکەوە.</div>
       </div>
     </div>
   </div>
@@ -2136,12 +1893,39 @@ function openChangePassword(){
 async function submitChangePassword(){
   const cur = document.getElementById('curPass').value;
   const nw = document.getElementById('newPass').value;
-  if(!cur || !nw){ showToast('تکایە هەردوو وشەی نهێنی بنووسە', 'error'); return; }
-  if(nw.length<6){ showToast('وشەی نهێنی نوێ دەبێت لانیکەم ٦ پیت بێت', 'error'); return; }
+
+  if(!cur || !nw){
+    showToast('تکایە هەردوو خانە پڕبکەرەوە', 'error');
+    return;
+  }
+  if(nw.length < 4){
+    showToast('وشەی نهێنی نوێ دەبێت لانیکەم ٤ پیت بێت', 'error');
+    return;
+  }
+
   try{
-    await apiPost({action:'changePassword',session:state.session.token,currentPassword:cur,newPassword:nw});
-    showToast('وشەی نهێنی گۆڕدرا', 'success'); closeModal();
-  }catch(e){ showToast(e.message==='wrong_password'?'وشەی نهێنی ئێستا هەڵەیە':'گۆڕینی وشەی نهێنی سەرنەکەوت', 'error'); }
+    await apiPost({
+      action:'changePassword',
+      session: state.session && state.session.token ? state.session.token : '',
+      currentPassword: cur,
+      newPassword: nw
+    });
+    const acc = state.accounts.find(a=>a.username===state.session.username);
+    if(acc){
+      acc.password = nw;
+      delete acc.passwordHash;
+    }
+    showToast('وشەی نهێنی گۆڕدرا', 'success');
+    closeModal();
+  }catch(e){
+    console.error('change password failed', e);
+    showToast(
+      e.message === 'invalid_credentials'
+        ? 'وشەی نهێنی ئێستا هەڵەیە'
+        : 'گۆڕینی وشەی نهێنی سەرنەکەوت',
+      'error'
+    );
+  }
 }
 
 /* ==================== INIT ==================== */

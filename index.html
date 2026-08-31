@@ -420,7 +420,7 @@ function escAttr(v){ return String(v==null?'':v).replace(/&/g,'&amp;').replace(/
    لە ڕێگەی Google Apps Script Web App (Code.gs). لینک و کۆدی نهێنی ڕاستەوخۆ لێرە دادەنرێن —
    یەک جار لەلایەن بەڕێوەبەرەوە، پاشان هەموو کەسێک کە فایلەکە بکاتەوە خۆکارانە پەیوەست دەبێت،
    بێ ئەوەی پێویستی بە هیچ ڕێکخستنێکی تر هەبێت. سیشن (چوونەژوورەوە) تەنها لۆکاڵە دەمێنێتەوە. */
-const SHEETS_URL = 'https://script.google.com/macros/s/AKfycbxl0GqmAI_P8QO4k87XwvK-yk-3FSgRy50eDllQbmcnRnWAoDBMmhgYJerIUBSrxcdaeA/exec';
+const SHEETS_URL = 'https://script.google.com/macros/s/AKfycbz3_ASGbcBNJkB2FuZGwWIRB5m3SwO6QVqTIaf2dq-uEIoXGrDPfW8F4wp5yb1KMYdNYg/exec';
 const SHEETS_TOKEN = 'mohammed1999';
 const LS_SESSION_KEY = 'rk_session';
 
@@ -447,11 +447,28 @@ function syncBadgeHtml(){
     <span style="width:7px;height:7px;border-radius:50%;background:${m.c};display:inline-block;flex:none;"></span><span class="sync-badge-text">${m.t}</span></span>`;
 }
 
+/* fetch() بە دووبارە هەوڵدانەوە — ئەگەر ئینتەرنێت بۆ چرکەیەک کورت ببێتەوە یان
+   وەڵامی سێرڤەر دواکەوتبێت، "Failed to fetch" دەردەکەوێت. لەبری وازهێنان لە
+   یەکەم هەوڵدا، ئەم فەنکشنە خۆکارانە چەند جارێکی تر هەوڵدەداتەوە پێش ئەوەی
+   هەڵەکە بگەڕێنێتەوە بۆ کۆدی سەرەوە. */
+async function fetchWithRetry(url, options, retries=2, backoffMs=1200){
+  let lastErr;
+  for(let attempt=0; attempt<=retries; attempt++){
+    try{
+      return await fetch(url, options);
+    }catch(e){
+      lastErr = e;
+      if(attempt<retries) await new Promise(r=>setTimeout(r, backoffMs*(attempt+1)));
+    }
+  }
+  throw lastErr;
+}
+
 async function apiGet(){
   const url = getSheetsUrl();
   if(!url) return null;
   const sep = url.includes('?') ? '&' : '?';
-  const res = await fetch(url + sep + 'token=' + encodeURIComponent(getSheetsToken()) + '&t=' + Date.now());
+  const res = await fetchWithRetry(url + sep + 'token=' + encodeURIComponent(getSheetsToken()) + '&t=' + Date.now());
   if(!res.ok) throw new Error('network');
   const data = await res.json();
   if(data && data.error) throw new Error(data.error);
@@ -524,11 +541,14 @@ async function uploadFile(file, kind){
 async function apiPost(payload){
   const url = getSheetsUrl();
   if(!url) return null;
-  const res = await fetch(url, {
+  // بارکردنی فایل کاتی زیاتری دەوێت (فایلی گەورە بۆ ئینتەرنێتی خاو)، بۆیە
+  // دووبارە هەوڵدانەوەی زیاتری پێدەدەین. هاوکاتکردنی داتای ئاسایی بچووکترە.
+  const retries = payload.action==='uploadFile' ? 3 : 2;
+  const res = await fetchWithRetry(url, {
     method:'POST',
     headers:{ 'Content-Type':'text/plain;charset=utf-8' },
     body: JSON.stringify(Object.assign({ token:getSheetsToken() }, payload)),
-  });
+  }, retries);
   if(!res.ok) throw new Error('network');
   const data = await res.json();
   if(data && data.error) throw new Error(data.error);
@@ -536,51 +556,71 @@ async function apiPost(payload){
 }
 
 /* هەموو داتای هاوبەش، لەگەڵ وەشانی نیشاندانی خۆشەکراو بۆ خودی شیتەکە، بە یەک ناردن دەنێردرێت */
+let syncRetryTimer = null;
+let syncFailCount = 0;
 async function syncToSheets(){
   if(!isSheetsConfigured()) return;
   syncPending = true;
   clearTimeout(syncTimer);
-  syncTimer = setTimeout(async ()=>{
-    if(!syncPending) return;
-    syncPending = false;
-    setSyncBadge('busy');
-    try{
-      await apiPost({
-        raw:{
-          courses: state.courses,
-          students: state.students,
-          attendance: state.attendance,
-          accounts: state.accounts,
-        },
-        display:{
-          courses: state.courses.map(c=>({ id:c.id, name:c.name, cities:(c.cities||[]).join('، ') })),
-          students: state.students.map(s=>({
-            id:s.id, fullName:s.fullName, age:s.age, mobile:s.mobile, gender:s.gender, profession:s.profession, city:s.city||'',
-            courseNames: s.courseIds.map(id=>courseName(id)).join('، '), createdAt:s.createdAt,
-            photo: s.photoUrl ? `=IMAGE("${s.photoUrl}")` : '',
-            cv: s.cvUrl ? `=HYPERLINK("${s.cvUrl}","کردنەوەی سیڤی")` : '',
-          })),
-          attendance: state.attendance.map(a=>({ id:a.id, studentName:studentName(a.studentId), courseName:courseName(a.courseId), date:a.date, time:a.time, method:a.method, markedBy:a.markedBy })),
-        },
-      });
-      setSyncBadge('ok');
-    }catch(e){
-      console.error('sync failed', e);
-      setSyncBadge('error');
-      /* پێشتر هەمیشە یەک پەیامی نادروست دەردەکەوت ("پەیوەندی ئینتەرنێت بپشکنە")
-         تەنانەت کاتێک هۆکارەکە پەیوەندی ئینتەرنێت نەبوو (بۆ نموونە داتا زۆر
-         گەورە بوو). ئێستا هۆکاری ڕاستەقینەی گەڕاوە لە backendەوە پیشان دەدرێت،
-         بۆ ئەوەی بزانرێت کێشەکە چییە. */
-      const msg = (e && e.message) ? e.message : '';
-      if(msg && msg !== 'network' && msg !== 'unauthorized'){
-        showToast('هاوکاتکردن سەرنەکەوت: ' + msg, 'error');
-      } else if(msg === 'unauthorized'){
-        showToast('هاوکاتکردن سەرنەکەوت: TOKEN هەڵەیە یان یەک ناگرێتەوە', 'error');
-      } else {
-        showToast('هاوکاتکردن لەگەڵ Google Sheets سەرنەکەوت — پەیوەندی ئینتەرنێت بپشکنە', 'error');
-      }
+  syncTimer = setTimeout(doSyncNow, 400);
+}
+async function doSyncNow(){
+  if(!syncPending) return;
+  syncPending = false;
+  clearTimeout(syncRetryTimer);
+  setSyncBadge('busy');
+  try{
+    await apiPost({
+      raw:{
+        courses: state.courses,
+        students: state.students,
+        attendance: state.attendance,
+        accounts: state.accounts,
+      },
+      display:{
+        courses: state.courses.map(c=>({ id:c.id, name:c.name, cities:(c.cities||[]).join('، ') })),
+        students: state.students.map(s=>({
+          id:s.id, fullName:s.fullName, age:s.age, mobile:s.mobile, gender:s.gender, profession:s.profession, city:s.city||'',
+          courseNames: s.courseIds.map(id=>courseName(id)).join('، '), createdAt:s.createdAt,
+          photo: s.photoUrl ? `=IMAGE("${s.photoUrl}")` : '',
+          cv: s.cvUrl ? `=HYPERLINK("${s.cvUrl}","کردنەوەی سیڤی")` : '',
+        })),
+        attendance: state.attendance.map(a=>({ id:a.id, studentName:studentName(a.studentId), courseName:courseName(a.courseId), date:a.date, time:a.time, method:a.method, markedBy:a.markedBy })),
+      },
+    });
+    setSyncBadge('ok');
+    syncFailCount = 0;
+  }catch(e){
+    console.error('sync failed', e);
+    setSyncBadge('error');
+    /* پێشتر هەمیشە یەک پەیامی نادروست دەردەکەوت ("پەیوەندی ئینتەرنێت بپشکنە")
+       تەنانەت کاتێک هۆکارەکە پەیوەندی ئینتەرنێت نەبوو (بۆ نموونە داتا زۆر
+       گەورە بوو). ئێستا هۆکاری ڕاستەقینەی گەڕاوە لە backendەوە پیشان دەدرێت،
+       بۆ ئەوەی بزانرێت کێشەکە چییە. */
+    const msg = (e && e.message) ? e.message : '';
+    /* "Failed to fetch" واتای وایە فرۆنتئێند تەنانەت نەیتوانی پەیوەندی بە
+       سێرڤەرەکەوە بکات (نەک ئەوەی سێرڤەر وەڵامی هەڵەی دابێتەوە). ئێمە پێشتر
+       چەند جارێک هەوڵماندایەوە (fetchWithRetry)، بۆیە ئەگەر هێشتا شکستی
+       هێنا، ئەگەرە زۆرەکە یان پەیوەندی ئینتەرنێتی ئەم ساتەیە، یان ڕێگری
+       CORS/ڕێکخستنی دیپلۆیمێنتە. هەردوو حاڵەت وەک "Failed to fetch" دەردەکەون. */
+    if(msg === 'Failed to fetch' || msg === 'NetworkError when attempting to fetch resource.' || msg==='network'){
+      showToast('هاوکاتکردن سەرنەکەوت — پەیوەندی بە سێرڤەرەکە نەکرا. پەیوەندی ئینتەرنێت بپشکنە، یان دڵنیابەرەوە دیپلۆیمێنتی Apps Script چالاکە (Deploy → Manage deployments)', 'error');
+    } else if(msg === 'unauthorized'){
+      showToast('هاوکاتکردن سەرنەکەوت: TOKEN هەڵەیە یان یەک ناگرێتەوە', 'error');
+    } else if(msg){
+      showToast('هاوکاتکردن سەرنەکەوت: ' + msg, 'error');
+    } else {
+      showToast('هاوکاتکردن لەگەڵ Google Sheets سەرنەکەوت — پەیوەندی ئینتەرنێت بپشکنە', 'error');
     }
-  }, 400);
+    /* خۆکارانە چەند جارێکی تر هەوڵدەداتەوە بەبێ پێویستی بەوەی بەکارهێنەر
+       گۆڕانکارییەکی تر بکات — زۆربەی کاتی کێشەی ئینتەرنێتی مۆبایل کورتخایەنە
+       و بەم شێوەیە خۆی چاک دەکاتەوە. */
+    syncFailCount++;
+    if(syncFailCount <= 5){
+      const delay = Math.min(30000, 5000 * syncFailCount);
+      syncRetryTimer = setTimeout(()=>{ syncPending = true; doSyncNow(); }, delay);
+    }
+  }
 }
 
 async function saveCourses(){ await syncToSheets(); }
@@ -829,6 +869,31 @@ function renderLoadError(){
   </div>`;
 }
 async function retryLoad(){ state.ready=false; state.loadError=false; state.needsSetup=false; render(); await loadAll(); }
+
+/* پشکنینی پەیوەندی — بۆ یارمەتیدان لە دۆزینەوەی هۆکاری کێشەکانی هاوکاتکردن.
+   یەک پرسیاری سادەی GET دەنێرێت و تێچووی کاتی وەڵامدانەوە پیشان دەدات، یان
+   هۆکاری ڕوونی هەڵە ئەگەر شکستی هێنا. */
+async function testConnection(){
+  const box = document.getElementById('connTestResult');
+  if(!box) return;
+  box.innerHTML = `<div class="note-box">تاقیکردنەوە لە جێبەجێکردندایە...</div>`;
+  const start = performance.now();
+  try{
+    const data = await apiGet();
+    const ms = Math.round(performance.now()-start);
+    box.innerHTML = `<div class="note-box">✓ پەیوەندی سەرکەوتوو بوو (${ms}ms). کۆرس:${(data&&data.courses||[]).length} · قوتابی:${(data&&data.students||[]).length} · ئامادەیی:${(data&&data.attendance||[]).length}</div>`;
+  }catch(e){
+    const ms = Math.round(performance.now()-start);
+    const msg = (e && e.message) || 'نەزانراو';
+    let hint = '';
+    if(msg==='Failed to fetch' || msg==='network'){
+      hint = 'پەیوەندی بە سێرڤەرەکەوە نەکرا. پەیوەندی ئینتەرنێت بپشکنە، یان لە Apps Script بڕوانە Deploy → Manage deployments، دڵنیابەرەوە دیپلۆیمێنتەکە هێشتا چالاکە و "Who has access" ـی لەسەر Anyone دانراوە.';
+    } else if(msg==='unauthorized'){
+      hint = 'TOKENی ناو index.html لەگەڵ TOKENی ناو Code.gs یەک ناگرێتەوە.';
+    }
+    box.innerHTML = `<div class="note-box warn">✗ پەیوەندی سەرنەکەوت (${ms}ms) — ${msg}${hint?'<br>'+hint:''}</div>`;
+  }
+}
 
 /* ==================== LOGIN VIEW ==================== */
 function renderLogin(){
@@ -2149,6 +2214,9 @@ function renderSettings(){
             ? `<span style="color:var(--green);font-weight:700;">✓ پەیوەست کراوە</span> — ${SHEETS_URL}`
             : `<span style="color:var(--danger);font-weight:700;">✗ پەیوەست نەکراوە</span> — لینک و TOKENـی خوارەوە لە ناو کۆدی فایلەکەدا دابنێ`}
         </div>
+        ${isSheetsConfigured() ? `
+        <button class="btn btn-outline btn-sm" style="margin-top:10px;" onclick="testConnection()">${ICONS.cloud.replace('width="24"','width="14"')} تاقیکردنەوەی پەیوەندی</button>
+        <div id="connTestResult" style="margin-top:10px;"></div>` : ''}
       </div>
       <div class="note-box warn">ئەم سیستەمە لە دوو فایل پێکهاتووە:
         <div style="margin-top:6px;line-height:1.9;">

@@ -379,6 +379,7 @@ let state = {
   scanStream: null,
   scanLoopId: null,
   searchQuery: '',
+  profileCityFilter: 'all',
   selectedStudentId: null,
   reportDate: '',
   reportCourseId: 'all',
@@ -979,17 +980,17 @@ function renderDashboard(){
   const today = todayStr();
   const todayCount = state.attendance.filter(a=>a.date===today).length;
   const cards = [
-    { label:'کۆی قوتابیان', value: state.students.length, icon: ICONS.student, bg:'var(--green-pale)', color:'var(--green)' },
-    { label:'کۆی کۆرسەکان', value: state.courses.length, icon: ICONS.course, bg:'var(--navy-soft)', color:'var(--navy)' },
-    { label:'ئامادەیی ئەمڕۆ', value: todayCount, icon: ICONS.attendance, bg:'var(--green-pale)', color:'var(--green)' },
-    { label:'کۆی تۆمارەکانی ئامادەیی', value: state.attendance.length, icon: ICONS.report, bg:'var(--navy-soft)', color:'var(--navy)' },
+    { label:'کۆی قوتابیان', value: state.students.length, icon: ICONS.student, bg:'var(--green-pale)', color:'var(--green)', action:"openStudentsByCity()", hint:'کلیک بکە بۆ بینینی دابەشکردن بەپێی شار' },
+    { label:'کۆی کۆرسەکان', value: state.courses.length, icon: ICONS.course, bg:'var(--navy-soft)', color:'var(--navy)', action:"go('courses')", hint:'کلیک بکە بۆ چوونە بەڕێوەبردنی کۆرسەکان' },
+    { label:'ئامادەیی ئەمڕۆ', value: todayCount, icon: ICONS.attendance, bg:'var(--green-pale)', color:'var(--green)', action:"openTodayReport()", hint:'کلیک بکە بۆ بینینی ڕاپۆرتی ئەمڕۆ' },
+    { label:'کۆی تۆمارەکانی ئامادەیی', value: state.attendance.length, icon: ICONS.report, bg:'var(--navy-soft)', color:'var(--navy)', action:"openAllAttendanceReport()", hint:'کلیک بکە بۆ بینینی هەموو تۆمارەکان' },
   ];
   const recent = [...state.attendance].sort((a,b)=> (b.date+b.time).localeCompare(a.date+a.time)).slice(0,8);
 
   return `
   <div class="grid grid-4" style="margin-bottom:18px;">
     ${cards.map(c=>`
-      <div class="card stat-card">
+      <div class="card stat-card" onclick="${c.action}" title="${c.hint}" style="cursor:pointer;transition:.15s;" onmouseover="this.style.boxShadow='var(--shadow)'" onmouseout="this.style.boxShadow='var(--shadow-sm)'">
         <div class="icon-wrap" style="background:${c.bg};color:${c.color};">${c.icon}</div>
         <div class="label">${c.label}</div>
         <div class="value">${c.value}</div>
@@ -1019,7 +1020,7 @@ function renderDashboard(){
       <div style="display:flex;flex-direction:column;gap:10px;">
         ${state.courses.map(c=>{
           const cnt = state.students.filter(s=>s.courseIds.includes(c.id)).length;
-          return `<div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg);padding:11px 14px;border-radius:10px;">
+          return `<div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg);padding:11px 14px;border-radius:10px;cursor:pointer;" onclick="go('courses')" title="کلیک بکە بۆ بەڕێوەبردنی ئەم کۆرسە">
             <span style="font-weight:700;font-size:13.5px;">${c.name}</span>
             <span class="badge badge-green">${cnt} قوتابی</span>
           </div>`;
@@ -1027,6 +1028,43 @@ function renderDashboard(){
       </div>`}
     </div>
   </div>`;
+}
+
+/* کلیک لەسەر کارتی "کۆی قوتابیان" — دابەشکردنی قوتابیان بەپێی شار پیشان دەدات،
+   کلیک لەسەر هەر شارێک دەتوانێت بتباتە لاپەڕەی پرۆفایلەکان بە فلتەری هەمان شار */
+function openStudentsByCity(){
+  const counts = CITIES.map(city=>({ city, cnt: state.students.filter(s=>s.city===city).length }));
+  const noCity = state.students.filter(s=>!s.city).length;
+  openModal('قوتابیان بەپێی شار', `
+    <div style="display:flex;flex-direction:column;gap:8px;">
+      ${counts.map(c=>`
+        <div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg);padding:12px 14px;border-radius:10px;cursor:pointer;" onclick="goProfilesByCity('${c.city}')">
+          <span style="font-weight:700;font-size:13.5px;">${c.city}</span>
+          <span class="badge badge-green">${c.cnt} قوتابی</span>
+        </div>`).join('')}
+      ${noCity>0 ? `
+        <div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg);padding:12px 14px;border-radius:10px;cursor:pointer;" onclick="goProfilesByCity('')">
+          <span style="font-weight:700;font-size:13.5px;color:var(--muted);">بەبێ شاری دیاریکراو</span>
+          <span class="badge badge-gray">${noCity} قوتابی</span>
+        </div>` : ''}
+    </div>
+  `, `<button class="btn btn-outline" onclick="closeModal()">داخستن</button>`);
+}
+function goProfilesByCity(city){
+  closeModal();
+  state.profileCityFilter = city || 'nocity';
+  state.searchQuery = '';
+  go('profiles');
+}
+function openTodayReport(){
+  state.reportDate = todayStr();
+  state.reportCourseId = 'all';
+  go('report');
+}
+function openAllAttendanceReport(){
+  state.reportDate = 'ALL';
+  state.reportCourseId = 'all';
+  go('report');
 }
 
 function emptyState(msg){
@@ -1417,10 +1455,15 @@ async function submitAddCourse(ev){
   const name = input.value.trim();
   if(!name) return;
   const cities = Array.from(document.querySelectorAll('#newCourseCities input:checked')).map(i=>i.value);
-  state.courses.push({ id: uid('crs'), name, cities, createdAt: new Date().toISOString() });
+  const newCourse = { id: uid('crs'), name, cities, createdAt: new Date().toISOString() };
+  state.courses.push(newCourse);
   await saveCourses();
   showToast('کۆرس زیادکرا', 'success');
   render();
+  // ڕاستەوخۆ مۆداڵی زیادکردنی قوتابیان بکەرەوە بۆ ئەم کۆرسە نوێیە، بۆ ئەوەی
+  // بەڕێوەبەر بتوانێت یەکسەر بە چیک بۆکس قوتابیانی شارێکی دیاریکراو زیاد بکات
+  // بۆ کۆرسەکە، بەبێ ئەوەی پێویست بێت هەریەکەیان بە دەستی دەستکاری بکات.
+  openEnrollModal(newCourse.id, cities.length===1 ? cities[0] : undefined);
 }
 async function deleteCourse(id){
   const cnt = state.students.filter(s=>s.courseIds.includes(id)).length;
@@ -1827,22 +1870,24 @@ async function onQrDetected(data){
 /* ==================== REPORT ==================== */
 function renderReport(){
   if(!state.reportDate) state.reportDate = todayStr();
+  const showAllDates = state.reportDate === 'ALL';
   const rows = state.attendance.filter(a=>{
-    const dateOk = a.date === state.reportDate;
+    const dateOk = showAllDates || a.date === state.reportDate;
     const courseOk = state.reportCourseId==='all' || a.courseId===state.reportCourseId;
     return dateOk && courseOk;
-  }).sort((a,b)=>a.time.localeCompare(b.time));
+  }).sort((a,b)=> showAllDates ? (b.date+b.time).localeCompare(a.date+a.time) : a.time.localeCompare(b.time));
 
   return `
   <div class="toolbar">
     <div class="toolbar-left">
       <div class="field" style="margin:0;">
-        <input type="date" value="${state.reportDate}" onchange="onReportDateChange(this.value)">
+        <input type="date" value="${showAllDates?todayStr():state.reportDate}" onchange="onReportDateChange(this.value)">
       </div>
       <select onchange="onReportCourseChange(this.value)">
         <option value="all" ${state.reportCourseId==='all'?'selected':''}>هەموو کۆرسەکان</option>
         ${state.courses.map(c=>`<option value="${c.id}" ${state.reportCourseId===c.id?'selected':''}>${c.name}</option>`).join('')}
       </select>
+      ${!showAllDates ? `<button class="btn btn-outline btn-sm" onclick="onReportShowAllDates()">هەموو ڕۆژەکان</button>` : `<button class="btn btn-outline btn-sm" onclick="onReportDateChange('${todayStr()}')">تەنها ئەمڕۆ</button>`}
     </div>
     <div class="toolbar-right">
       <button class="btn btn-outline btn-sm" onclick="exportCsv()">${ICONS.download.replace('width="24"','width="14"')} داگرتنی CSV</button>
@@ -1850,16 +1895,17 @@ function renderReport(){
     </div>
   </div>
   <div class="card">
-    <h3>${ICONS.report.replace('width="24"','width="17"')} ئامادەیی ڕۆژی ${state.reportDate} (${rows.length} تۆمار)</h3>
-    ${rows.length===0 ? emptyState('هیچ تۆمارێکی ئامادەیی نییە بۆ ئەم ڕۆژە') : `
+    <h3>${ICONS.report.replace('width="24"','width="17"')} ${showAllDates ? 'هەموو تۆمارەکانی ئامادەیی' : 'ئامادەیی ڕۆژی '+state.reportDate} (${rows.length} تۆمار)</h3>
+    ${rows.length===0 ? emptyState('هیچ تۆمارێکی ئامادەیی نییە') : `
     <div class="table-wrap"><table>
-      <thead><tr><th>#</th><th>ناوی قوتابی</th><th>کۆرس</th><th>کات</th><th>شێواز</th><th>تۆمارکەر</th></tr></thead>
+      <thead><tr><th>#</th><th>ناوی قوتابی</th><th>کۆرس</th>${showAllDates?'<th>بەروار</th>':''}<th>کات</th><th>شێواز</th><th>تۆمارکەر</th></tr></thead>
       <tbody>
         ${rows.map((a,i)=>`
           <tr>
             <td>${i+1}</td>
             <td style="font-weight:700;">${studentName(a.studentId)}</td>
             <td><span class="badge badge-navy">${courseName(a.courseId)}</span></td>
+            ${showAllDates?`<td>${a.date}</td>`:''}
             <td>${a.time}</td>
             <td>${a.method==='qr'?'<span class="badge badge-green">کیو ئار</span>':'<span class="badge badge-gray">دەستی</span>'}</td>
             <td style="font-size:11.5px;color:var(--muted);">${a.markedBy}</td>
@@ -1870,10 +1916,12 @@ function renderReport(){
 }
 function onReportDateChange(v){ state.reportDate = v; document.getElementById('viewContent').innerHTML = renderView(); }
 function onReportCourseChange(v){ state.reportCourseId = v; document.getElementById('viewContent').innerHTML = renderView(); }
+function onReportShowAllDates(){ state.reportDate = 'ALL'; document.getElementById('viewContent').innerHTML = renderView(); }
 
 function exportCsv(){
+  const showAllDates = state.reportDate === 'ALL';
   const rows = state.attendance.filter(a=>{
-    const dateOk = a.date === state.reportDate;
+    const dateOk = showAllDates || a.date === state.reportDate;
     const courseOk = state.reportCourseId==='all' || a.courseId===state.reportCourseId;
     return dateOk && courseOk;
   });
@@ -1885,7 +1933,7 @@ function exportCsv(){
   const blob = new Blob(["\uFEFF"+csv], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
-  link.href = url; link.download = `raport_${state.reportDate}.csv`;
+  link.href = url; link.download = `raport_${showAllDates?'hemû':state.reportDate}.csv`;
   link.click();
   URL.revokeObjectURL(url);
   showToast('فایلی CSV دابەزێنرا', 'success');
@@ -1926,16 +1974,27 @@ async function deleteStudent(id){
 /* ==================== PROFILES / SEARCH ==================== */
 function renderProfiles(){
   const q = (state.searchQuery||'').trim().toLowerCase();
-  const results = q ? state.students.filter(s=>s.fullName.toLowerCase().includes(q)) : state.students;
+  const cityFilter = state.profileCityFilter || 'all';
+  let results = q ? state.students.filter(s=>s.fullName.toLowerCase().includes(q)) : state.students;
+  if(cityFilter==='nocity') results = results.filter(s=>!s.city);
+  else if(cityFilter!=='all') results = results.filter(s=>s.city===cityFilter);
   const selected = state.selectedStudentId ? studentById(state.selectedStudentId) : null;
 
   return `
   <div class="grid grid-2">
     <div class="card">
       <h3>${ICONS.search.replace('width="24"','width="17"')} گەڕان بەدوای قوتابی</h3>
-      <div class="search-box" style="margin-bottom:14px;">
+      <div class="search-box" style="margin-bottom:10px;">
         ${ICONS.search}
         <input type="text" placeholder="ناوی قوتابی بنووسە..." value="${state.searchQuery||''}" oninput="onProfileSearch(this.value)" style="width:100%;">
+      </div>
+      <div class="field" style="margin-bottom:14px;">
+        <label>فلتەری شار</label>
+        <select onchange="onProfileCityFilter(this.value)">
+          <option value="all" ${cityFilter==='all'?'selected':''}>هەموو شارەکان</option>
+          ${CITIES.map(c=>`<option value="${c}" ${cityFilter===c?'selected':''}>${c}</option>`).join('')}
+          <option value="nocity" ${cityFilter==='nocity'?'selected':''}>بەبێ شاری دیاریکراو</option>
+        </select>
       </div>
       ${results.length===0 ? emptyState('هیچ قوتابیەک نەدۆزرایەوە') : `
       <div style="display:flex;flex-direction:column;gap:8px;max-height:520px;overflow-y:auto;">
@@ -1955,6 +2014,7 @@ function renderProfiles(){
   </div>`;
 }
 function onProfileSearch(v){ state.searchQuery = v; document.getElementById('viewContent').innerHTML = renderView(); }
+function onProfileCityFilter(v){ state.profileCityFilter = v; document.getElementById('viewContent').innerHTML = renderView(); }
 function selectProfile(id){ state.selectedStudentId = id; document.getElementById('viewContent').innerHTML = renderView(); }
 
 function renderStudentProfile(s){
@@ -2107,6 +2167,7 @@ function renderSettings(){
           <li>لینکی Web App کۆپی بکە و لەگەڵ هەمان TOKEN لەناو کۆدی index.html دابنێ (وەک سەرەوە باسکرا).</li>
         </ol>
         <div class="note-box warn" style="margin-top:10px;">تێبینی سەلامەتی: هەرکەسێک ئەم لینک و کۆدە نهێنییە بزانێت دەتوانێت داتاکان ببینێت. تەنها فایلی index.html بدە بە کەسانی متمانەپێکراو، و فایلی Code.gs (لەگەڵ TOKEN) بە شێوەی گشتی بڵاو مەکەوە.</div>
+        <div class="note-box warn" style="margin-top:10px;"><b>گرنگ:</b> ئەگەر کۆدی Code.gs نوێ بکەیتەوە (وەک ئەم وەشانە)، تەنها پەیستکردنی کۆدی نوێ لەناو Apps Script بەسنییە — دەبێت لە Deploy &larr; Manage deployments &larr; دووگمەی قەڵەمی لای دیپلۆیمێنتی هەیە &larr; Version: New version &larr; Deploy بکەیت. ئەگەر ئەمە نەکەیت، لینکی Web App (SHEETS_URL) هێشتا وەشانی کۆنی کۆدەکە جێبەجێ دەکات و گۆڕانکارییە نوێیەکان کاریگەریان نابێت — ئەمە زۆرجار هۆکاری "هاوکاتکردن سەرنەکەوت"ـە دوای نوێکردنەوەی کۆد.</div>
       </div>
     </div>
   </div>

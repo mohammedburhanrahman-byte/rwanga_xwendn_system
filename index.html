@@ -553,38 +553,59 @@ async function saveSession(){
 }
 
 async function loadAll(){
+  // The secure backend requires a valid session for getData.
+  // Therefore we MUST NOT call getData before login; doing so caused the
+  // old "Google Sheets connection failed" screen on every fresh browser.
   if(!isSheetsConfigured()){
     state.needsSetup = true;
     state.ready = true;
     render();
     return;
   }
+
+  state.loadError = false;
+  state.needsSetup = false;
+
+  let savedSession = null;
+  try {
+    savedSession = JSON.parse(localStorage.getItem(LS_SESSION_KEY) || 'null');
+  } catch(e) {
+    savedSession = null;
+  }
+
+  // No session yet: show Login immediately. Do not call the authenticated API.
+  if(!savedSession || !savedSession.token){
+    state.session = null;
+    state.ready = true;
+    render();
+    return;
+  }
+
+  state.session = savedSession;
+
   try{
     const data = await apiGet();
     state.courses = (data && data.courses) || [];
     state.students = (data && data.students) || [];
     state.attendance = (data && data.attendance) || [];
-    let accounts = (data && data.accounts) || [];
-    if(!accounts || accounts.length===0){
-      accounts = [
-        { username:'muhamad', password:'muhamad123', role:'admin', name:'بەڕێوەبەری سیستەم' },
-        { username:'staff', password:'staff123', role:'staff', name:'کارمەندی تۆمارکردن' },
-      ];
-      state.accounts = accounts;
-      await syncToSheets();
-    } else {
-      state.accounts = accounts;
-    }
-    const session = JSON.parse(localStorage.getItem(LS_SESSION_KEY) || 'null');
-    if(session && state.accounts.some(a=>a.username===session.username && a.role===session.role)){
-      state.session = session;
-    }
-    state.needsSetup = false;
+    state.accounts = (data && data.accounts) || [];
+
     state.ready = true;
     render();
     startBackgroundSync();
   }catch(e){
     console.error('loadAll failed', e);
+
+    // An expired/deleted session is not a connection failure.
+    if(String(e && e.message || e).indexOf('unauthorized_session') >= 0){
+      state.session = null;
+      localStorage.removeItem(LS_SESSION_KEY);
+      state.ready = true;
+      render();
+      return;
+    }
+
+    state.session = null;
     state.ready = true;
     state.loadError = true;
     render();
@@ -785,8 +806,8 @@ function renderSetup(){
         </div>
         <ol style="font-size:12.5px;color:var(--muted);line-height:2;text-align:right;padding-right:18px;margin:10px 0 18px;">
           <li>فایلی <code>index.html</code> بکەرەوە بە دەستکاریکەرێکی دەق (وەک VS Code یان Notepad).</li>
-          <li>بگەڕێ بۆ دەقی <code>SHEETS_URL</code> و <code>SHEETS_TOKEN</code> لە سەرەوەی کۆدەکە.</li>
-          <li>لینکی Web Appـی خۆت و کۆدی نهێنیت لەوێ دابنێ (ڕێنمایی و کۆدی Apps Script لە بەشی ڕێکخستنەکانی ناو بەرنامەکە هەیە).</li>
+          <li>دڵنیابە لەوەی لینکی <code>SHEETS_URL</code> لە سەرەوەی <code>index.html</code> هەمان Web App ـی Deployکراوە.</li>
+          <li>هیچ TOKENێک لە <code>index.html</code> پێویست نییە؛ Login و Session لەلایەن Apps Script ـەوە بەڕێوەدەبرێت.</li>
           <li>فایلەکە پاشەکەوت و دووبارە باربکەرەوە (Upload) بۆ سێرڤەرەکەت.</li>
         </ol>
         <button class="btn btn-primary" onclick="retryLoad()">هەوڵدانەوە دوای ڕێکخستن</button>
@@ -802,7 +823,7 @@ function renderLoadError(){
       <div class="login-form" style="text-align:center;">
         <div style="font-weight:800;font-size:18px;color:var(--danger);margin-bottom:10px;">پەیوەندی بە Google Sheets سەرنەکەوت</div>
         <div style="font-size:13px;color:var(--muted);line-height:1.9;margin-bottom:20px;">
-          تکایە پەیوەندی ئینتەرنێت بپشکنە، یان دڵنیابەرەوە کە SHEETS_URL و SHEETS_TOKEN لە ناو کۆدەکەدا ڕاستن و Apps Scriptـەکە بە دروستی Deploy کراوە.
+          تکایە دڵنیابەرەوە کە Web App ـی Apps Script بە دروستی Deploy کراوە و URL ـەکە لە <code>SHEETS_URL</code> هەمان URL ـی نوێیە.
         </div>
         <button class="btn btn-primary" onclick="retryLoad()">هەوڵدانەوە</button>
       </div>
@@ -1859,7 +1880,7 @@ function renderSettings(){
           <b>index.html</b> — خودی بەرنامەکە، لەسەر ئینتەرنێت هۆست دەکرێت.<br>
           <b>Code.gs</b> — کۆدی Google Apps Script، لەناو Google Sheet دادەنرێت (بڕوانە خوارەوە).
         </div>
-        دوای دیپلۆیکردنی Code.gs، لینکی Web App و TOKENـەکەت لەناو index.html، لە دەقی <code>SHEETS_URL</code> و <code>SHEETS_TOKEN</code> دابنێ، پاشان فایلەکە هۆست بکە. هەموو کارمەندێک کە هەمان index.html بەکاردەهێنێت خۆکارانە پەیوەست دەبێت.
+        دوای دیپلۆیکردنی Code.gs، تەنها دڵنیابە لەوەی لینکی Web App لە <code>SHEETS_URL</code> ـدا هەمان URL ـی Deployکراوە. Login و Session خۆکارانە لەلایەن Apps Script ـەوە بەڕێوەدەچن.
       </div>
       <div style="margin-top:18px;">
         <div style="font-size:12.5px;font-weight:700;color:var(--muted);margin-bottom:8px;">هەنگاوەکانی سازکردنی Google Sheets (یەک جار پێویستە):</div>

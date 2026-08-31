@@ -396,7 +396,8 @@ const SHEETS_URL = 'https://script.google.com/macros/s/AKfycbz3_ASGbcBNJkB2FuZGw
 const LS_SESSION_KEY = 'rk_session';
 
 function getSheetsUrl(){ return SHEETS_URL.trim(); }
-function isSheetsConfigured(){ return !!SHEETS_URL && SHEETS_URL.includes('/macros/s/') && SHEETS_URL.endsWith('/exec'); }
+function getSheetsToken(){ return ''; }
+function isSheetsConfigured(){ return !!SHEETS_URL && !SHEETS_URL.includes('PASTE_YOUR_DEPLOYMENT_ID_HERE'); }
 
 let syncTimer = null;
 let syncPending = false;
@@ -419,8 +420,7 @@ function syncBadgeHtml(){
 
 async function apiGet(){
   const session = state.session && state.session.token ? state.session.token : '';
-  if(!session) throw new Error('unauthorized');
-  return apiPost({action:'getData', session});
+  return apiPost({ action:'getData', session });
 }
 /* ==================== FILE UPLOAD (photo / CV → Google Drive) ==================== */
 const MAX_FILE_MB = 10;
@@ -476,7 +476,11 @@ async function uploadFile(file, kind){
   try{
     const toSend = kind==='photo' ? await compressImage(file) : file;
     const base64 = await fileToBase64(toSend);
-    const res = await apiPost({ action:'uploadFile', kind, fileName:toSend.name, mimeType:toSend.type, fileData: base64 });
+    const res = await apiPost({
+      action:'uploadFile',
+      session: state.session && state.session.token ? state.session.token : '',
+      kind, fileName:toSend.name, mimeType:toSend.type, fileData: base64
+    });
     if(!res || !res.id || !res.url) throw new Error('upload_failed');
     return { id: res.id, url: res.url };
   }catch(e){
@@ -489,14 +493,10 @@ async function uploadFile(file, kind){
 async function apiPost(payload){
   const url = getSheetsUrl();
   if(!url) throw new Error('not_configured');
-  const body = Object.assign({}, payload);
-  if(!body.session && state.session && state.session.token){
-    body.session = state.session.token;
-  }
   const res = await fetch(url, {
     method:'POST',
     headers:{ 'Content-Type':'text/plain;charset=utf-8' },
-    body: JSON.stringify(body),
+    body: JSON.stringify(payload),
   });
   if(!res.ok) throw new Error('network');
   const data = await res.json();
@@ -559,34 +559,38 @@ async function loadAll(){
     render();
     return;
   }
-
-  // With the secure backend, data is not loaded before login.
-  // The login endpoint authenticates first and returns the initial permitted data.
-  const saved = JSON.parse(localStorage.getItem(LS_SESSION_KEY) || 'null');
-  if(saved && saved.token){
-    state.session = saved;
-    try{
-      const data = await apiGet();
-      state.courses = (data && data.courses) || [];
-      state.students = (data && data.students) || [];
-      state.attendance = (data && data.attendance) || [];
-      state.accounts = (data && data.accounts) || [];
-      state.ready = true;
-      state.needsSetup = false;
-      render();
-      startBackgroundSync();
-      return;
-    }catch(e){
-      console.warn('saved session invalid/expired', e);
-      localStorage.removeItem(LS_SESSION_KEY);
-      state.session = null;
+  try{
+    const data = await apiGet();
+    state.courses = (data && data.courses) || [];
+    state.students = (data && data.students) || [];
+    state.attendance = (data && data.attendance) || [];
+    let accounts = (data && data.accounts) || [];
+    if(!accounts || accounts.length===0){
+      accounts = [
+        { username:'muhamad', password:'muhamad123', role:'admin', name:'بەڕێوەبەری سیستەم' },
+        { username:'staff', password:'staff123', role:'staff', name:'کارمەندی تۆمارکردن' },
+      ];
+      state.accounts = accounts;
+      await syncToSheets();
+    } else {
+      state.accounts = accounts;
     }
+    const session = JSON.parse(localStorage.getItem(LS_SESSION_KEY) || 'null');
+    if(session && state.accounts.some(a=>a.username===session.username && a.role===session.role)){
+      state.session = session;
+    }
+    state.needsSetup = false;
+    state.ready = true;
+    render();
+    startBackgroundSync();
+  }catch(e){
+    console.error('loadAll failed', e);
+    state.ready = true;
+    state.loadError = true;
+    render();
   }
-
-  state.ready = true;
-  state.needsSetup = false;
-  render();
 }
+
 /* هەر چەند چرکەیەک بە شێوەی بێدەنگ داتای نوێ لە Google Sheets وەردەگیرێت،
    بۆ ئەوەی چەند کارمەندێک بەیەکەوە کاربکەن و هەمووان نوێترین زانیاری ببینن */
 /* پێش ڕیفرێشکردنی ناوخۆیی، دڵنیابەرەوە کە بەکارهێنەر لەناو فۆرمێکدا خەریکی نووسینە —
@@ -689,9 +693,10 @@ async function doLogin(ev){
   const u = document.getElementById('loginUser').value.trim();
   const p = document.getElementById('loginPass').value;
   const errBox = document.getElementById('loginErr');
-
-  if(errBox) errBox.style.display='none';
-
+  if(!u || !p){
+    if(errBox){ errBox.style.display='block'; errBox.textContent='ناوی بەکارهێنەر و وشەی نهێنی پڕ بکەرەوە.'; }
+    return;
+  }
   try{
     const result = await apiPost({
       action:'login',
@@ -699,44 +704,38 @@ async function doLogin(ev){
       password:p,
       role:loginRole
     });
-
     if(!result || !result.session){
-      throw new Error('invalid_credentials');
+      throw new Error('login_failed');
+    }
+    state.session = result.session;
+    await saveSession();
+
+    if(result.data){
+      state.courses = result.data.courses || [];
+      state.students = result.data.students || [];
+      state.attendance = result.data.attendance || [];
+      state.accounts = result.data.accounts || state.accounts;
     }
 
-    state.session = result.session;
-
-    const data = result.data || {};
-    state.courses = data.courses || [];
-    state.students = data.students || [];
-    state.attendance = data.attendance || [];
-    state.accounts = data.accounts || [];
-
-    await saveSession();
     state.currentView = 'dashboard';
-    state.ready = true;
-    state.loadError = false;
     render();
     showToast('بەخێربێیت ' + (state.session.name || u), 'success');
-    startBackgroundSync();
   }catch(e){
     console.error('login failed', e);
     if(errBox){
       errBox.style.display='block';
-      errBox.textContent =
-        e.message === 'invalid_credentials'
-          ? 'ناوی بەکارهێنەر یان وشەی نهێنی هەڵەیە، یان ڕۆڵ ڕاست نییە.'
-          : 'چوونەژوورەوە سەرنەکەوت — پەیوەندی بە سێرڤەر بپشکنە.';
+      errBox.textContent = e.message === 'invalid_credentials'
+        ? 'ناوی بەکارهێنەر یان وشەی نهێنی هەڵەیە، یان ڕۆڵ ڕاست نییە.'
+        : 'چوونەژوورەوە سەرنەکەوت. پەیوەندی بە سیستەمەکە بپشکنە.';
     }
   }
 }
 
 async function doLogout(){
+  const oldSession = state.session && state.session.token ? state.session.token : '';
   try{
-    if(state.session && state.session.token){
-      await apiPost({action:'logout', session:state.session.token});
-    }
-  }catch(e){}
+    if(oldSession) await apiPost({action:'logout', session:oldSession});
+  }catch(e){ console.warn('logout backend failed', e); }
   state.session = null;
   await saveSession();
   render();
@@ -786,7 +785,7 @@ function renderSetup(){
         </div>
         <ol style="font-size:12.5px;color:var(--muted);line-height:2;text-align:right;padding-right:18px;margin:10px 0 18px;">
           <li>فایلی <code>index.html</code> بکەرەوە بە دەستکاریکەرێکی دەق (وەک VS Code یان Notepad).</li>
-          <li>بگەڕێ بۆ دەقی <code>SHEETS_URL</code> و <code>Web App URL</code> لە سەرەوەی کۆدەکە.</li>
+          <li>بگەڕێ بۆ دەقی <code>SHEETS_URL</code> و <code>SHEETS_TOKEN</code> لە سەرەوەی کۆدەکە.</li>
           <li>لینکی Web Appـی خۆت و کۆدی نهێنیت لەوێ دابنێ (ڕێنمایی و کۆدی Apps Script لە بەشی ڕێکخستنەکانی ناو بەرنامەکە هەیە).</li>
           <li>فایلەکە پاشەکەوت و دووبارە باربکەرەوە (Upload) بۆ سێرڤەرەکەت.</li>
         </ol>
@@ -803,7 +802,7 @@ function renderLoadError(){
       <div class="login-form" style="text-align:center;">
         <div style="font-weight:800;font-size:18px;color:var(--danger);margin-bottom:10px;">پەیوەندی بە Google Sheets سەرنەکەوت</div>
         <div style="font-size:13px;color:var(--muted);line-height:1.9;margin-bottom:20px;">
-          تکایە پەیوەندی ئینتەرنێت بپشکنە، یان دڵنیابەرەوە کە SHEETS_URL و Web App URL لە ناو کۆدەکەدا ڕاستن و Apps Scriptـەکە بە دروستی Deploy کراوە.
+          تکایە پەیوەندی ئینتەرنێت بپشکنە، یان دڵنیابەرەوە کە SHEETS_URL و SHEETS_TOKEN لە ناو کۆدەکەدا ڕاستن و Apps Scriptـەکە بە دروستی Deploy کراوە.
         </div>
         <button class="btn btn-primary" onclick="retryLoad()">هەوڵدانەوە</button>
       </div>
@@ -1860,7 +1859,7 @@ function renderSettings(){
           <b>index.html</b> — خودی بەرنامەکە، لەسەر ئینتەرنێت هۆست دەکرێت.<br>
           <b>Code.gs</b> — کۆدی Google Apps Script، لەناو Google Sheet دادەنرێت (بڕوانە خوارەوە).
         </div>
-        دوای دیپلۆیکردنی Code.gs، لینکی Web App و پەیوەندی Web App لەناو index.html، لە دەقی <code>SHEETS_URL</code> و <code>Web App URL</code> دابنێ، پاشان فایلەکە هۆست بکە. هەموو کارمەندێک کە هەمان index.html بەکاردەهێنێت خۆکارانە پەیوەست دەبێت.
+        دوای دیپلۆیکردنی Code.gs، لینکی Web App و TOKENـەکەت لەناو index.html، لە دەقی <code>SHEETS_URL</code> و <code>SHEETS_TOKEN</code> دابنێ، پاشان فایلەکە هۆست بکە. هەموو کارمەندێک کە هەمان index.html بەکاردەهێنێت خۆکارانە پەیوەست دەبێت.
       </div>
       <div style="margin-top:18px;">
         <div style="font-size:12.5px;font-weight:700;color:var(--muted);margin-bottom:8px;">هەنگاوەکانی سازکردنی Google Sheets (یەک جار پێویستە):</div>
@@ -1893,39 +1892,13 @@ function openChangePassword(){
 async function submitChangePassword(){
   const cur = document.getElementById('curPass').value;
   const nw = document.getElementById('newPass').value;
-
-  if(!cur || !nw){
-    showToast('تکایە هەردوو خانە پڕبکەرەوە', 'error');
-    return;
-  }
-  if(nw.length < 4){
-    showToast('وشەی نهێنی نوێ دەبێت لانیکەم ٤ پیت بێت', 'error');
-    return;
-  }
-
-  try{
-    await apiPost({
-      action:'changePassword',
-      session: state.session && state.session.token ? state.session.token : '',
-      currentPassword: cur,
-      newPassword: nw
-    });
-    const acc = state.accounts.find(a=>a.username===state.session.username);
-    if(acc){
-      acc.password = nw;
-      delete acc.passwordHash;
-    }
-    showToast('وشەی نهێنی گۆڕدرا', 'success');
-    closeModal();
-  }catch(e){
-    console.error('change password failed', e);
-    showToast(
-      e.message === 'invalid_credentials'
-        ? 'وشەی نهێنی ئێستا هەڵەیە'
-        : 'گۆڕینی وشەی نهێنی سەرنەکەوت',
-      'error'
-    );
-  }
+  const acc = state.accounts.find(a=>a.username===state.session.username);
+  if(!acc || acc.password !== cur){ showToast('وشەی نهێنی ئێستا هەڵەیە', 'error'); return; }
+  if(!nw || nw.length<4){ showToast('وشەی نهێنی نوێ دەبێت لانیکەم ٤ پیت بێت', 'error'); return; }
+  acc.password = nw;
+  await saveAccounts();
+  showToast('وشەی نهێنی گۆڕدرا', 'success');
+  closeModal();
 }
 
 /* ==================== INIT ==================== */

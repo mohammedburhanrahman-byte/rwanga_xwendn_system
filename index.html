@@ -383,6 +383,12 @@ let state = {
   reportDate: '',
   reportCourseId: 'all',
   sidebarOpen: false,
+  enrollCourseId: '',
+  enrollCityFilter: 'all',
+  enrollMode: 'manual',
+  enrollSelected: new Set(),
+  enrollScanStream: null,
+  enrollScanLoopId: null,
 };
 
 const CITIES = ['هەولێر', 'دهۆک', 'سلێمانی', 'زاخۆ', 'کەلار', 'گەرمیان', 'شەقلاوە'];
@@ -721,6 +727,7 @@ function openModal(title, bodyHtml, footHtml=''){
 }
 function closeModal(){
   stopScanner();
+  if(typeof stopEnrollScanner === 'function') stopEnrollScanner();
   const el = document.getElementById('modalOverlay');
   if(el) el.remove();
 }
@@ -1380,12 +1387,17 @@ function renderCourses(){
         <tbody>
           ${state.courses.map(c=>{
             const cnt = state.students.filter(s=>s.courseIds.includes(c.id)).length;
-            const cities = (c.cities && c.cities.length) ? c.cities.join('، ') : '<span style="color:var(--muted);">هیچ</span>';
+            const cities = (c.cities && c.cities.length)
+              ? c.cities.map(city=>`<span class="badge badge-navy" style="cursor:pointer;" title="پیشاندانی قوتابیانی ${city}" onclick="openEnrollModal('${c.id}','${city}')">${city}</span>`).join(' ')
+              : '<span style="color:var(--muted);">هیچ</span>';
             return `<tr>
               <td style="font-weight:700;">${c.name}</td>
-              <td style="font-size:12px;">${cities}</td>
+              <td style="font-size:12px;display:flex;flex-wrap:wrap;gap:4px;">${cities}</td>
               <td><span class="badge badge-green">${cnt}</span></td>
-              <td><button class="btn btn-danger btn-sm" onclick="deleteCourse('${c.id}')">${ICONS.trash.replace('width="24"','width="14"')}</button></td>
+              <td style="white-space:nowrap;">
+                <button class="btn btn-outline btn-sm" title="زیادکردنی قوتابیان بۆ ئەم کۆرسە" onclick="openEnrollModal('${c.id}')">${ICONS.student.replace('width="24"','width="14"')}</button>
+                <button class="btn btn-danger btn-sm" onclick="deleteCourse('${c.id}')">${ICONS.trash.replace('width="24"','width="14"')}</button>
+              </td>
             </tr>`;
           }).join('')}
         </tbody>
@@ -1417,6 +1429,200 @@ async function deleteCourse(id){
   await saveCourses();
   showToast('کۆرس سڕایەوە', 'info');
   render();
+}
+
+/* ==================== BULK ENROLL STUDENTS INTO A COURSE ====================
+   لێرەدا دەتوانیت قوتابیانی هەڵبژێردراو (یان بەگوێرەی شار) بە یەکجار زیاد
+   بکەیت بۆ کۆرسێک، یان بە سکانکردنی کیو ئار کۆدی کارتی هەر قوتابییەک، بەبێ
+   ئەوەی پێویست بێت هەموو قوتابیەکان دەستکاری بکەیت یان هەریەکەیان بە تەنها
+   لە فۆرمی دەستکاریدا بکەیتەوە. */
+function openEnrollModal(courseId, cityFilter){
+  state.enrollCourseId = courseId;
+  state.enrollCityFilter = cityFilter || 'all';
+  state.enrollMode = 'manual';
+  state.enrollSelected = new Set();
+  openModal('زیادکردنی قوتابیان بۆ کۆرس', renderEnrollModalBody(), '');
+}
+function closeEnrollModal(){ stopEnrollScanner(); closeModal(); }
+
+function renderEnrollModalBody(){
+  const course = state.courses.find(c=>c.id===state.enrollCourseId);
+  if(!course) return emptyState('کۆرسەکە نەدۆزرایەوە');
+  const cityOptions = ['all', ...(course.cities && course.cities.length ? course.cities : CITIES)];
+  return `
+  <div class="note-box" style="margin-bottom:14px;">کۆرس: <b>${course.name}</b></div>
+  <div class="tab-strip">
+    <button class="${state.enrollMode==='manual'?'active':''}" onclick="setEnrollMode('manual')">${ICONS.list.replace('width="24"','width="14"')} هەڵبژاردنی دەستی</button>
+    <button class="${state.enrollMode==='qr'?'active':''}" onclick="setEnrollMode('qr')">${ICONS.qr.replace('width="24"','width="14"')} سکانی کیو ئار</button>
+  </div>
+  <div id="enrollModeArea">
+    ${state.enrollMode==='qr' ? renderEnrollQrBlock() : renderEnrollManualBlock(cityOptions)}
+  </div>`;
+}
+
+function setEnrollMode(m){
+  stopEnrollScanner();
+  state.enrollMode = m;
+  const area = document.getElementById('enrollModeArea');
+  const course = state.courses.find(c=>c.id===state.enrollCourseId);
+  const cityOptions = ['all', ...(course.cities && course.cities.length ? course.cities : CITIES)];
+  if(area) area.innerHTML = m==='qr' ? renderEnrollQrBlock() : renderEnrollManualBlock(cityOptions);
+}
+
+function renderEnrollManualBlock(cityOptions){
+  const course = state.courses.find(c=>c.id===state.enrollCourseId);
+  const filtered = state.students.filter(s=> state.enrollCityFilter==='all' || s.city===state.enrollCityFilter);
+  return `
+  <div class="field" style="margin-bottom:12px;">
+    <label>پیشاندانی قوتابیانی شار</label>
+    <select onchange="onEnrollCityChange(this.value)">
+      ${cityOptions.map(c=>`<option value="${c}" ${state.enrollCityFilter===c?'selected':''}>${c==='all'?'هەموو شارەکان':c}</option>`).join('')}
+    </select>
+  </div>
+  ${filtered.length===0 ? emptyState('هیچ قوتابیەک بۆ ئەم شارە نییە') : `
+  <div style="display:flex;flex-direction:column;gap:8px;max-height:340px;overflow-y:auto;margin-bottom:14px;">
+    ${filtered.map(s=>{
+      const enrolled = s.courseIds.includes(course.id);
+      const checked = state.enrollSelected.has(s.id);
+      return `<label style="display:flex;align-items:center;gap:10px;background:var(--bg);padding:10px 12px;border-radius:10px;${enrolled?'opacity:.6;':''}">
+        <input type="checkbox" ${enrolled?'disabled':''} ${checked?'checked':''} onchange="toggleEnrollSelect('${s.id}')" style="accent-color:var(--green);width:16px;height:16px;">
+        <div class="avatar" style="width:30px;height:30px;font-size:11px;">${initials(s.fullName)}</div>
+        <div style="flex:1;font-size:13px;font-weight:700;">${s.fullName} <span style="font-weight:400;color:var(--muted);font-size:11px;">${s.city?'· '+s.city:''}</span></div>
+        ${enrolled ? `<span class="badge badge-green">${ICONS.check.replace('width="24"','width="12"')} پێشتر تۆمارکراوە</span>` : ''}
+      </label>`;
+    }).join('')}
+  </div>
+  <button class="btn btn-primary btn-block" onclick="addSelectedToCourse()">${ICONS.plus.replace('width="24"','width="16"')} زیادکردنی هەڵبژێردراوان بۆ کۆرس</button>
+  `}`;
+}
+function onEnrollCityChange(v){
+  state.enrollCityFilter = v;
+  const course = state.courses.find(c=>c.id===state.enrollCourseId);
+  const cityOptions = ['all', ...(course.cities && course.cities.length ? course.cities : CITIES)];
+  const area = document.getElementById('enrollModeArea');
+  if(area) area.innerHTML = renderEnrollManualBlock(cityOptions);
+}
+function toggleEnrollSelect(studentId){
+  if(state.enrollSelected.has(studentId)) state.enrollSelected.delete(studentId);
+  else state.enrollSelected.add(studentId);
+}
+async function addSelectedToCourse(){
+  const course = state.courses.find(c=>c.id===state.enrollCourseId);
+  if(!course) return;
+  const ids = Array.from(state.enrollSelected);
+  if(ids.length===0){ showToast('هیچ قوتابیەکت هەڵنەبژاردووە', 'error'); return; }
+  let added = 0;
+  ids.forEach(id=>{
+    const s = studentById(id);
+    if(s && !s.courseIds.includes(course.id)){ s.courseIds.push(course.id); added++; }
+  });
+  state.enrollSelected = new Set();
+  await saveStudents();
+  showToast(added + ' قوتابی زیادکرا بۆ ' + course.name, 'success');
+  const cityOptions = ['all', ...(course.cities && course.cities.length ? course.cities : CITIES)];
+  const area = document.getElementById('enrollModeArea');
+  if(area) area.innerHTML = renderEnrollManualBlock(cityOptions);
+  const vc = document.getElementById('viewContent');
+  if(vc) vc.innerHTML = renderView();
+}
+
+function renderEnrollQrBlock(){
+  return `
+  <div class="note-box" style="margin-bottom:14px;">کامێرا کارابکە و کیو ئار کۆدی قوتابییەکان بەیەک لەدوای یەک بخە بەردەم کامێرا — هەریەکەیان خۆکارانە بۆ ئەم کۆرسە زیاد دەکرێت و کامێرا بۆ قوتابی داهاتوو بەردەوام دەبێت.</div>
+  <div id="enrollScanArea">
+    <button class="btn btn-primary btn-block" onclick="startEnrollScanner()">${ICONS.camera.replace('width="24"','width="16"')} کردنەوەی کامێرا</button>
+  </div>
+  <div id="enrollScanResult" style="margin-top:14px;"></div>
+  <div id="enrollScanLog" style="margin-top:14px;display:flex;flex-direction:column;gap:6px;max-height:220px;overflow-y:auto;"></div>`;
+}
+
+async function startEnrollScanner(){
+  const area = document.getElementById('enrollScanArea');
+  if(!area) return;
+  area.innerHTML = `
+    <div class="video-wrap">
+      <video id="enrollScanVideo" autoplay playsinline muted></video>
+      <div class="scan-frame"></div>
+    </div>
+    <div style="text-align:center;margin-top:12px;">
+      <button class="btn btn-outline btn-sm" onclick="stopEnrollScanner()">${ICONS.close.replace('width="24"','width="13"')} داخستنی کامێرا</button>
+    </div>`;
+  if(!window.jsQR){
+    area.innerHTML = `<div class="note-box warn">پرۆگرامی خوێندنەوەی کیو ئار بار نەبووە (کێشەی ئینتەرنێت). تکایە پەیجەکە ڕیفرێش بکە و دووبارە هەوڵبدەرەوە.</div>
+      <button class="btn btn-primary btn-block" onclick="startEnrollScanner()" style="margin-top:10px;">هەوڵدانەوە</button>`;
+    return;
+  }
+  try{
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment', width: { ideal: 960 }, height: { ideal: 720 } }
+    });
+    state.enrollScanStream = stream;
+    const video = document.getElementById('enrollScanVideo');
+    video.srcObject = stream;
+    try{ await video.play(); }catch(playErr){}
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    let lastCode = '';
+    let lastAt = 0;
+    const tick = ()=>{
+      if(!state.enrollScanStream) return;
+      if(video.readyState === video.HAVE_ENOUGH_DATA && video.videoWidth > 0 && window.jsQR){
+        const maxDim = 700;
+        const scale = Math.min(1, maxDim / Math.max(video.videoWidth, video.videoHeight));
+        canvas.width = Math.round(video.videoWidth * scale);
+        canvas.height = Math.round(video.videoHeight * scale);
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const code = jsQR(imgData.data, imgData.width, imgData.height, { inversionAttempts: 'attemptBoth' });
+        if(code && code.data){
+          // خۆپاراستن لە دووبارە خوێندنەوەی هەمان کۆد چەند فریمێک بەدواداب، چونکە
+          // کامێرا بەردەوام کراوەتەوە و کارتەکە هێشتا لەبەردەم کامێرادایە
+          const now = Date.now();
+          if(!(code.data===lastCode && (now-lastAt) < 2500)){
+            lastCode = code.data; lastAt = now;
+            onEnrollQrDetected(code.data);
+          }
+        }
+      }
+      state.enrollScanLoopId = requestAnimationFrame(tick);
+    };
+    state.enrollScanLoopId = requestAnimationFrame(tick);
+  }catch(e){
+    area.innerHTML = `<div class="note-box warn">نەتوانرا کامێرا کرایەوە. ڕێگە بدە بۆ کامێرا. (${e.message||'هەڵە'})</div>
+      <button class="btn btn-primary btn-block" onclick="startEnrollScanner()" style="margin-top:10px;">هەوڵدانەوە</button>`;
+  }
+}
+function stopEnrollScanner(){
+  if(state.enrollScanLoopId){ cancelAnimationFrame(state.enrollScanLoopId); state.enrollScanLoopId = null; }
+  if(state.enrollScanStream){ state.enrollScanStream.getTracks().forEach(t=>t.stop()); state.enrollScanStream = null; }
+}
+async function onEnrollQrDetected(data){
+  const course = state.courses.find(c=>c.id===state.enrollCourseId);
+  const resultBox = document.getElementById('enrollScanResult');
+  const logBox = document.getElementById('enrollScanLog');
+  const student = studentById(data.trim());
+  if(!course) return;
+  if(!student){
+    if(resultBox) resultBox.innerHTML = `<div class="note-box warn">کیو ئار کۆدەکە هیچ قوتابیەکی بۆ نەدۆزرایەوە.</div>`;
+    return;
+  }
+  let msg, cls;
+  if(student.courseIds.includes(course.id)){
+    msg = student.fullName + ' — پێشتر لەم کۆرسەدا تۆمارکراوە'; cls = 'gray';
+  } else {
+    student.courseIds.push(course.id);
+    await saveStudents();
+    msg = student.fullName + ' — زیادکرا بۆ ' + course.name; cls = 'green';
+    const vc = document.getElementById('viewContent');
+    if(vc) vc.innerHTML = renderView();
+  }
+  if(resultBox) resultBox.innerHTML = `<div class="note-box">${msg}</div>`;
+  if(logBox){
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:8px;background:var(--bg);padding:8px 10px;border-radius:8px;font-size:12.5px;';
+    row.innerHTML = `<span class="badge badge-${cls==='green'?'green':'gray'}">${cls==='green'?'✓':'•'}</span><span>${msg}</span>`;
+    logBox.prepend(row);
+  }
 }
 
 /* ==================== ATTENDANCE ==================== */

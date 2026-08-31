@@ -383,7 +383,7 @@ let state = {
   sidebarOpen: false,
 };
 
-const CITIES = ['هەولێر', 'دهۆک', 'سلێمانی', 'زاخۆ', 'کەلار','ئاکرێ','هەلبجە','گەرمیان','شەقلاوە','سۆران'];
+const CITIES = ['هەولێر', 'دهۆک', 'سلێمانی', 'زاخۆ', 'کەلار','زاخۆ','گەرمیان','گەرمیان','شەقلاوە'];
 
 function uid(prefix){ return prefix + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2,8); }
 function todayStr(){ const d = new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
@@ -1395,7 +1395,10 @@ function renderCourses(){
             return `<tr>
               <td style="font-weight:700;">${c.name}</td>
               <td><span class="badge badge-green">${cnt}</span></td>
-              <td><button class="btn btn-danger btn-sm" onclick="deleteCourse('${c.id}')">${ICONS.trash.replace('width="24"','width="14"')}</button></td>
+              <td style="display:flex;gap:6px;justify-content:flex-end;">
+                <button class="btn btn-outline btn-sm" onclick="openManageCourseStudents('${c.id}')">قوتابیان</button>
+                <button class="btn btn-danger btn-sm" onclick="deleteCourse('${c.id}')">${ICONS.trash.replace('width="24"','width="14"')}</button>
+              </td>
             </tr>`;
           }).join('')}
         </tbody>
@@ -1419,6 +1422,52 @@ async function deleteCourse(id){
   state.courses = state.courses.filter(c=>c.id!==id);
   await saveCourses();
   showToast('کۆرس سڕایەوە', 'info');
+  render();
+}
+
+/* دەکرێت کۆرسێکی نوێ یان هەر کۆرسێکی هەبوو بۆ چەند قوتابیێکی تۆمارکراو زیاد بکرێت
+   یان لێیان لابردرێت، بەبێ ئەوەی پێویست بکات هەر قوتابیەک بە تاکی دەستکاری بکرێت. */
+function openManageCourseStudents(courseId){
+  const c = courseById(courseId);
+  if(!c) return;
+  const body = state.students.length===0 ? emptyState('هیچ قوتابیەک تۆمار نەکراوە') : `
+  <div class="field" style="margin-bottom:10px;">
+    <input type="text" id="mcsSearch" placeholder="گەڕان بەدوای قوتابیدا..." oninput="filterManageCourseStudents()">
+  </div>
+  <div id="mcsList" style="display:flex;flex-direction:column;gap:7px;max-height:420px;overflow:auto;">
+    ${state.students.map(s=>`
+      <label class="mcs-row" data-name="${s.fullName.toLowerCase()}" style="display:flex;align-items:center;gap:10px;background:var(--bg);padding:9px 10px;border-radius:9px;cursor:pointer;">
+        <input type="checkbox" value="${s.id}" ${s.courseIds.includes(courseId)?'checked':''}>
+        <div class="avatar" style="width:30px;height:30px;font-size:11px;">${initials(s.fullName)}</div>
+        <div style="flex:1;">
+          <div style="font-weight:700;font-size:13px;">${s.fullName}</div>
+          <div style="font-size:11px;color:var(--muted);">${s.courseIds.map(id=>courseName(id)).join('، ') || 'بەبێ کۆرس'}</div>
+        </div>
+      </label>`).join('')}
+  </div>`;
+  const foot = `<button class="btn btn-outline" onclick="closeModal()">داخستن</button>
+    <button class="btn btn-primary" onclick="saveCourseStudents('${courseId}')">پاشەکەوتکردن</button>`;
+  openModal(`قوتابیانی ${c.name}`, body, foot);
+}
+function filterManageCourseStudents(){
+  const q = (document.getElementById('mcsSearch').value || '').trim().toLowerCase();
+  document.querySelectorAll('#mcsList .mcs-row').forEach(row=>{
+    row.style.display = row.dataset.name.includes(q) ? 'flex' : 'none';
+  });
+}
+async function saveCourseStudents(courseId){
+  const list = document.getElementById('mcsList');
+  const checked = new Set(Array.from(list.querySelectorAll('input[type=checkbox]:checked')).map(i=>i.value));
+  let changed = 0;
+  state.students.forEach(s=>{
+    const has = s.courseIds.includes(courseId);
+    const shouldHave = checked.has(s.id);
+    if(shouldHave && !has){ s.courseIds.push(courseId); changed++; }
+    if(!shouldHave && has){ s.courseIds = s.courseIds.filter(id=>id!==courseId); changed++; }
+  });
+  await saveStudents();
+  closeModal();
+  showToast(changed>0 ? `${changed} قوتابی نوێکرایەوە` : 'هیچ گۆڕانکارییەک نەکرا', 'success');
   render();
 }
 
@@ -1775,7 +1824,7 @@ function printDailyReport(){
         </div>
       </div>
       ${groupsHtml}
-      <div class="footer">دروستکراوە لەلایەن  ئەندازیار محمد برهان   </div>
+      <div class="footer">دروستکراوە لەلایەن سیستەمی بەڕێوەبردنی ئامادەیی</div>
     </div>
     <script>
       window.onload = function(){
